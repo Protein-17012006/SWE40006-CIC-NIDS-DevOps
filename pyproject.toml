@@ -21,7 +21,8 @@ extend-exclude = ["docs"]
 select = ["E", "F", "W", "I", "B", "UP", "S"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101"]
+# Tests assert, and pass dummy credentials on purpose
+"tests/**" = ["S101", "S105", "S106"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
