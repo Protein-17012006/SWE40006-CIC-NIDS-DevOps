@@ -36,6 +36,8 @@ EXPECTED = {
         "report_key",
         "draft_contract_key",
         "message",
+        "first_ts",
+        "last_ts",
     },
     "quality_steps": {"run_id", "step", "rows_affected"},
     "quality_columns": {"run_id", "column_name", "nulls", "infinite", "action"},
@@ -113,3 +115,12 @@ def test_upgrade_twice_is_a_no_op(migrated_db_url):
 def test_downgrade_removes_every_table(migrated_db_url):
     downgrade(migrated_db_url, "base")
     assert set(_table_columns(migrated_db_url)) <= {"alembic_version"}
+
+
+@pytest.mark.db
+def test_migration_0002_adds_and_removes_the_run_time_span(empty_db_url):
+    upgrade(empty_db_url)
+    assert {"first_ts", "last_ts"} <= _table_columns(empty_db_url)["ingestion_runs"]
+    downgrade(empty_db_url, "0001_initial_schema")
+    assert not {"first_ts", "last_ts"} & _table_columns(empty_db_url)["ingestion_runs"]
+    assert "agg_hourly" in _table_columns(empty_db_url)

@@ -67,3 +67,11 @@ def migrated_db_url(empty_db_url):
 
     upgrade(empty_db_url)
     return empty_db_url
+
+
+@pytest.fixture
+def engine(migrated_db_url):
+    """An engine on a freshly migrated test database."""
+    engine = sa.create_engine(migrated_db_url)
+    yield engine
+    engine.dispose()
