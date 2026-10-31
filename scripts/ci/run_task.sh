@@ -20,10 +20,7 @@ subnets=$(stack_output cicnids-platform PublicSubnetIds)
 family="cicnids-$env_name-$kind"
 
 overrides='{}'
-if (($# > 0)); then
-  overrides=$(jq -cn --arg name "$kind" '{containerOverrides: [{name: $name, command: $ARGS.positional}]}' \
-    --args "$@")
-fi
+if (($# > 0)); then overrides=$(container_overrides "$kind" "$@"); fi
 network="awsvpcConfiguration={subnets=[$subnets],securityGroups=[$security_group],assignPublicIp=ENABLED}"
 
 task_arn=$(aws ecs run-task --cluster "$cluster" --task-definition "$family" --launch-type FARGATE \
