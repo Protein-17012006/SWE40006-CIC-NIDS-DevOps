@@ -1,0 +1,6 @@
+# Normalise line endings to LF so scripts and YAML behave the same in Linux containers
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.parquet binary
