@@ -21,6 +21,7 @@ COPY alembic.ini .
 COPY migrations/ migrations/
 COPY app/ app/
 COPY pipeline/ pipeline/
+COPY contracts/ contracts/
 
 RUN useradd --create-home --uid 10001 cicnids
 USER cicnids
