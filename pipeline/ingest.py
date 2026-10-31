@@ -1,10 +1,14 @@
-"""Ingest one raw file end to end (design section 5.2): match, clean, load or quarantine."""
+"""Ingest one raw file end to end (design section 5.2): match, clean, load or quarantine.
+
+reconcile (design section 5.3) re-ingests the files a deployed contract now reads differently.
+"""
 
 import shutil
 import time
 import zlib
 from collections import Counter
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pandas as pd
@@ -23,7 +27,14 @@ from pipeline.clean import (
 )
 from pipeline.contracts import Contract, Match, closest_contract, match_contract, missing_fields
 from pipeline.draft import draft_contract, quarantine_report
-from pipeline.load import FileData, RunRecord, finish_run, start_run
+from pipeline.load import (
+    FileData,
+    RunRecord,
+    finish_run,
+    latest_runs,
+    mark_stale_runs,
+    start_run,
+)
 from pipeline.storage import Bucket, RawFile, parse_raw_key
 
 REJECT_THRESHOLD = 0.20
@@ -269,3 +280,61 @@ def _loaded_message(
             reasons.append(f"failed checks ({checks:,})")
         text += f" Rejected {_plural(rejected, 'row')}: {', '.join(reasons)}."
     return text
+
+
+@dataclass
+class ReconcileSummary:
+    reingested: list[str] = field(default_factory=list)
+    skipped: int = 0
+    stale_failed: int = 0
+    missing: list[str] = field(default_factory=list)
+    failed: list[str] = field(default_factory=list)
+
+    @property
+    def message(self) -> str:
+        return (
+            f"re-ingested {_plural(len(self.reingested), 'file')}, skipped {self.skipped:,}, "
+            f"{len(self.missing):,} missing, {len(self.failed):,} failed, "
+            f"{_plural(self.stale_failed, 'stale run')} marked failed"
+        )
+
+
+def reconcile(
+    *,
+    engine: sa.Engine,
+    bucket: Bucket,
+    contracts: Sequence[Contract],
+    commit_sha: str,
+    workdir: Path,
+) -> ReconcileSummary:
+    """Re-ingest each file whose stored header now matches a different contract or version."""
+    summary = ReconcileSummary(stale_failed=mark_stale_runs(engine))
+    for run in latest_runs(engine):
+        candidate = None
+        if run.status in ("loaded", "quarantined") and run.source_columns:
+            candidate = match_contract(run.source_columns, contracts)
+        same = candidate and (candidate.contract.name, candidate.contract.version) == (
+            run.contract_name,
+            run.contract_version,
+        )
+        if candidate is None or same:
+            summary.skipped += 1
+            continue
+        if not bucket.exists(run.file_key):
+            log_event("reconcile_missing", level="WARNING", file_key=run.file_key)
+            summary.missing.append(run.file_key)
+            continue
+        try:
+            ingest_file(
+                run.file_key,
+                engine=engine,
+                bucket=bucket,
+                contracts=contracts,
+                commit_sha=commit_sha,
+                workdir=workdir,
+            )
+        except Exception:  # already recorded and logged by ingest_file; try the next file
+            summary.failed.append(run.file_key)
+        else:
+            summary.reingested.append(run.file_key)
+    return summary

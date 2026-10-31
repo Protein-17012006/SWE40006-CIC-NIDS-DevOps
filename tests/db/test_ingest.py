@@ -9,7 +9,7 @@ import yaml
 
 from pipeline.clean import CHUNK_ROWS
 from pipeline.contracts import load_contracts
-from pipeline.ingest import ingest_file
+from pipeline.ingest import ingest_file, reconcile
 
 pytestmark = pytest.mark.db
 TESTS = Path(__file__).resolve().parents[1]
@@ -236,3 +236,151 @@ def test_a_missing_object_records_no_run(ingest, engine):
     with pytest.raises(FileNotFoundError):
         ingest("raw/cse-cic-ids2018/gone.csv")
     assert one(engine, "SELECT count(*) AS n FROM ingestion_runs")["n"] == 0
+
+
+# Reconcile (ING-09) and status
+
+SIMULATED_SAMPLE = BROKEN / "simulated-real-traffic-01.csv"
+SIM_KEY = "raw/simulated-real-traffic-01.csv"
+
+
+def simulated_contract():
+    return load_contracts(TESTS / "fixtures/contracts")[0]
+
+
+def baseline(version: int = 1):
+    return load_contracts()[0].model_copy(update={"version": version})
+
+
+@pytest.fixture
+def reconcile_with(engine, bucket, tmp_path):
+    def run(contracts):
+        return reconcile(
+            engine=engine,
+            bucket=bucket,
+            contracts=contracts,
+            commit_sha="def5678",
+            workdir=tmp_path / "work",
+        )
+
+    return run
+
+
+def dataset_row(engine, dataset_id: str):
+    return one(engine, "SELECT * FROM datasets WHERE dataset_id = :d", d=dataset_id)
+
+
+def test_reconcile_loads_a_quarantined_file_once_its_contract_exists(
+    ingest, reconcile_with, bucket, engine
+):
+    assert ingest(upload(bucket, SIMULATED_SAMPLE, SIM_KEY)).status == "quarantined"
+    s = reconcile_with([baseline(), simulated_contract()])
+    assert (s.reingested, s.missing, s.failed) == ([SIM_KEY], [], [])
+    ds = dataset_row(engine, "simulated-real-traffic-01")
+    assert (ds["status"], ds["has_label"], ds["contract_name"]) == (
+        "loaded",
+        False,
+        "simulated-real-traffic",
+    )
+    assert "pkt_entropy" in ds["extra_fields"] and latest_run(engine)["commit_sha"] == "def5678"
+
+
+def test_reconcile_reingests_after_a_version_bump_and_then_stops(ingest, reconcile_with, bucket):
+    ingest(upload(bucket, WED, "raw/cse-cic-ids2018/wed.csv"))
+    assert reconcile_with([baseline(1)]).reingested == []
+    assert reconcile_with([baseline(2)]).reingested == ["raw/cse-cic-ids2018/wed.csv"]
+    assert reconcile_with([baseline(2)]).reingested == []
+
+
+def test_reconcile_skips_quarantine_with_same_contract(ingest, reconcile_with, bucket, tmp_path):
+    frame = wed()
+    frame.loc[frame.index[:70], "Label"] = "Worm"
+    ingest(upload_frame(bucket, tmp_path, frame, "raw/cse-cic-ids2018/worm.csv"))
+    s = reconcile_with(load_contracts())
+    assert (s.reingested, s.skipped) == ([], 1)
+
+
+def test_reconcile_skips_when_contract_is_gone(ingest, reconcile_with, bucket):
+    upload(bucket, SIMULATED_SAMPLE, SIM_KEY)
+    assert ingest(SIM_KEY, contracts=[baseline(), simulated_contract()]).status == "loaded"
+    assert reconcile_with([baseline()]).reingested == []
+
+
+def test_reconcile_skips_missing_raw_object(ingest, reconcile_with, bucket):
+    ingest(upload(bucket, SIMULATED_SAMPLE, SIM_KEY))
+    bucket.client.delete_object(Bucket=bucket.name, Key=SIM_KEY)
+    s = reconcile_with([baseline(), simulated_contract()])
+    assert (s.reingested, s.missing) == ([], [SIM_KEY])
+
+
+def test_reconcile_fails_stale_running_runs(reconcile_with, engine):
+    from pipeline.load import start_run
+
+    run = start_run(engine, "d", "raw/d/a.csv", "abc1234")
+    with engine.begin() as conn:
+        conn.execute(
+            sa.text(
+                "UPDATE ingestion_runs SET started_at = now() - interval '3 hours' "
+                "WHERE run_id = :r"
+            ),
+            {"r": run},
+        )
+    s = reconcile_with(load_contracts())
+    assert (s.stale_failed, s.reingested) == (1, [])
+    assert latest_run(engine)["status"] == "failed"
+
+
+def test_reconcile_keeps_going_after_a_failed_reingest(ingest, reconcile_with, bucket, monkeypatch):
+    first, second = "raw/sim-a.csv", "raw/sim-b.csv"
+    ingest(upload(bucket, SIMULATED_SAMPLE, first))
+    ingest(upload(bucket, SIMULATED_SAMPLE, second))
+    download = bucket.download
+
+    def flaky(key, path):
+        if key == first:
+            raise OSError("network down")
+        download(key, path)
+
+    monkeypatch.setattr(bucket, "download", flaky)
+    s = reconcile_with([baseline(), simulated_contract()])
+    assert (s.failed, s.reingested) == ([first], [second])
+
+
+def _cli_env(monkeypatch, settings_env, migrated_db_url):
+    from app.config import get_settings
+
+    monkeypatch.setenv("DATABASE_URL", migrated_db_url)
+    monkeypatch.setenv("S3_BUCKET", "cicnids-test")
+    get_settings.cache_clear()
+
+
+def test_cli_status_logs_each_dataset(
+    ingest, bucket, monkeypatch, settings_env, migrated_db_url, capsys
+):
+    from pipeline.cli import main
+
+    ingest(upload(bucket, WED, "raw/cse-cic-ids2018/wed.csv"))
+    _cli_env(monkeypatch, settings_env, migrated_db_url)
+    capsys.readouterr()
+    assert main(["status"]) == 0
+    out = capsys.readouterr()
+    statuses = [json.loads(line) for line in out.out.splitlines()]
+    datasets = [e for e in statuses if e["event"] == "dataset_status"]
+    assert [(d["dataset_id"], d["status"], d["files"]) for d in datasets] == [
+        ("cse-cic-ids2018", "loaded", 1)
+    ]
+    sizes = next(e for e in statuses if e["event"] == "table_sizes")
+    assert sizes["flow_sample"] > 0
+    assert statuses[-1]["message"] == "1 datasets"
+
+
+def test_cli_reconcile_and_ingest(bucket, monkeypatch, settings_env, migrated_db_url, capsys):
+    from pipeline.cli import main
+
+    upload(bucket, WED, "raw/cse-cic-ids2018/wed.csv")
+    _cli_env(monkeypatch, settings_env, migrated_db_url)
+    assert main(["ingest", "--key", "raw/cse-cic-ids2018/wed.csv"]) == 0
+    assert main(["reconcile"]) == 0
+    last = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert (last["event"], last["status"]) == ("reconcile", "ok")
+    assert last["message"].startswith("re-ingested 0 files")

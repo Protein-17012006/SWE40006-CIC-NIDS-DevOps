@@ -63,6 +63,43 @@ def _ingest(args: argparse.Namespace) -> str:
     return record.message if record else f"skipped {args.key}: not a CSV file under raw/"
 
 
+def _reconcile(args: argparse.Namespace) -> str:
+    from pipeline.contracts import load_contracts
+    from pipeline.ingest import reconcile
+    from pipeline.storage import Bucket
+
+    url, bucket_name = _database_url(), _bucket_name()
+    engine = sa.create_engine(url, pool_pre_ping=True)
+    try:
+        with tempfile.TemporaryDirectory() as workdir:
+            summary = reconcile(
+                engine=engine,
+                bucket=Bucket(bucket_name),
+                contracts=load_contracts(),
+                commit_sha=get_settings().app_version,
+                workdir=Path(workdir),
+            )
+    finally:
+        engine.dispose()
+    if summary.failed:
+        raise RuntimeError(f"{summary.message}; failed: {', '.join(summary.failed)}")
+    return summary.message
+
+
+def _status(args: argparse.Namespace) -> str:
+    from pipeline.load import dataset_summary, table_sizes
+
+    engine = sa.create_engine(_database_url(), pool_pre_ping=True)
+    try:
+        datasets = dataset_summary(engine)
+        for row in datasets:
+            log_event("dataset_status", **row)
+        log_event("table_sizes", **table_sizes(engine))
+    finally:
+        engine.dispose()
+    return f"{len(datasets)} datasets"
+
+
 COMMANDS: dict[str, tuple[str, Callable[[argparse.Namespace], str]]] = {
     "migrate": ("apply every Alembic migration (alembic upgrade head)", _migrate),
     "db-bootstrap": (
@@ -70,6 +107,11 @@ COMMANDS: dict[str, tuple[str, Callable[[argparse.Namespace], str]]] = {
         _db_bootstrap,
     ),
     "ingest": ("ingest one file from the environment bucket", _ingest),
+    "reconcile": (
+        "re-ingest the files whose header now matches a different contract or version",
+        _reconcile,
+    ),
+    "status": ("log each dataset's status and the size of each table", _status),
 }
 
 
