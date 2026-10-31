@@ -55,6 +55,15 @@ deploy_stack() {
     --role-arn "$(cfn_exec_role_arn)" --capabilities CAPABILITY_NAMED_IAM
     --no-fail-on-empty-changeset --tags Project=cic-nids "Environment=$env_tag")
   if (($# > 0)); then args+=(--parameter-overrides "$@"); fi
+  # A failed first creation leaves an empty ROLLBACK_COMPLETE stack that can only be deleted
+  local status
+  status=$(aws cloudformation describe-stacks --stack-name "$stack" \
+    --query 'Stacks[0].StackStatus' --output text 2>/dev/null) || true
+  if [[ "$status" == ROLLBACK_COMPLETE ]]; then
+    log "$stack failed to create earlier; deleting the empty stack before retrying"
+    aws cloudformation delete-stack --stack-name "$stack" --role-arn "$(cfn_exec_role_arn)"
+    aws cloudformation wait stack-delete-complete --stack-name "$stack"
+  fi
   log "deploying $stack"
   if ! aws cloudformation deploy "${args[@]}"; then
     log "deploying $stack failed; the latest failure reasons:"

@@ -59,7 +59,9 @@ Resources:
         - !GetAtt ProdDbSecurityGroup.GroupId
       MasterUsername: cicnids_admin
       ManageMasterUserPassword: true
-      BackupRetentionPeriod: 7
+      # The AWS free account plan rejects 7 days; 1 is allowed. The data can be rebuilt from
+      # the raw files in S3, and a snapshot is still taken when the instance is deleted.
+      BackupRetentionPeriod: 1
       AutoMinorVersionUpgrade: true
       CopyTagsToSnapshot: true
       DeletionProtection: false
@@ -83,7 +85,7 @@ Resources:
         - !GetAtt NonprodDbSecurityGroup.GroupId
       MasterUsername: cicnids_admin
       ManageMasterUserPassword: true
-      BackupRetentionPeriod: 7
+      BackupRetentionPeriod: 1
       AutoMinorVersionUpgrade: true
       CopyTagsToSnapshot: true
       DeletionProtection: false
