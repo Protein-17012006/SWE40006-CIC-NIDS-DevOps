@@ -240,7 +240,6 @@ def test_a_missing_object_records_no_run(ingest, engine):
 
 # Reconcile (ING-09) and status
 
-SIMULATED_SAMPLE = BROKEN / "simulated-real-traffic-01.csv"
 SIM_KEY = "raw/simulated-real-traffic-01.csv"
 
 
@@ -249,7 +248,8 @@ def simulated_contract():
 
 
 def baseline(version: int = 1):
-    return load_contracts()[0].model_copy(update={"version": version})
+    contract = next(c for c in load_contracts() if c.name == "cse-cic-ids2018")
+    return contract.model_copy(update={"version": version})
 
 
 @pytest.fixture
@@ -271,9 +271,10 @@ def dataset_row(engine, dataset_id: str):
 
 
 def test_reconcile_loads_a_quarantined_file_once_its_contract_exists(
-    ingest, reconcile_with, bucket, engine
+    ingest, reconcile_with, bucket, engine, simulated_csv
 ):
-    assert ingest(upload(bucket, SIMULATED_SAMPLE, SIM_KEY)).status == "quarantined"
+    upload(bucket, simulated_csv, SIM_KEY)
+    assert ingest(SIM_KEY, contracts=[baseline()]).status == "quarantined"
     s = reconcile_with([baseline(), simulated_contract()])
     assert (s.reingested, s.missing, s.failed) == ([SIM_KEY], [], [])
     ds = dataset_row(engine, "simulated-real-traffic-01")
@@ -300,14 +301,14 @@ def test_reconcile_skips_quarantine_with_same_contract(ingest, reconcile_with, b
     assert (s.reingested, s.skipped) == ([], 1)
 
 
-def test_reconcile_skips_when_contract_is_gone(ingest, reconcile_with, bucket):
-    upload(bucket, SIMULATED_SAMPLE, SIM_KEY)
+def test_reconcile_skips_when_contract_is_gone(ingest, reconcile_with, bucket, simulated_csv):
+    upload(bucket, simulated_csv, SIM_KEY)
     assert ingest(SIM_KEY, contracts=[baseline(), simulated_contract()]).status == "loaded"
     assert reconcile_with([baseline()]).reingested == []
 
 
-def test_reconcile_skips_missing_raw_object(ingest, reconcile_with, bucket):
-    ingest(upload(bucket, SIMULATED_SAMPLE, SIM_KEY))
+def test_reconcile_skips_missing_raw_object(ingest, reconcile_with, bucket, simulated_csv):
+    ingest(upload(bucket, simulated_csv, SIM_KEY), contracts=[baseline()])
     bucket.client.delete_object(Bucket=bucket.name, Key=SIM_KEY)
     s = reconcile_with([baseline(), simulated_contract()])
     assert (s.reingested, s.missing) == ([], [SIM_KEY])
@@ -330,10 +331,12 @@ def test_reconcile_fails_stale_running_runs(reconcile_with, engine):
     assert latest_run(engine)["status"] == "failed"
 
 
-def test_reconcile_keeps_going_after_a_failed_reingest(ingest, reconcile_with, bucket, monkeypatch):
+def test_reconcile_keeps_going_after_a_failed_reingest(
+    ingest, reconcile_with, bucket, monkeypatch, simulated_csv
+):
     first, second = "raw/sim-a.csv", "raw/sim-b.csv"
-    ingest(upload(bucket, SIMULATED_SAMPLE, first))
-    ingest(upload(bucket, SIMULATED_SAMPLE, second))
+    ingest(upload(bucket, simulated_csv, first), contracts=[baseline()])
+    ingest(upload(bucket, simulated_csv, second), contracts=[baseline()])
     download = bucket.download
 
     def flaky(key, path):

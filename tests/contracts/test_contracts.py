@@ -48,5 +48,6 @@ def test_every_contract_has_samples():
 
 def test_baseline_label_map_covers_the_sample_labels():
     contract = next(c for c in load_contracts() if c.name == "cse-cic-ids2018")
-    labels = {row[-1].strip() for s in SAMPLES for row in csv_rows(s)}
+    samples = sorted((HERE / "cse-cic-ids2018").glob("*.csv"))
+    labels = {row[-1].strip() for s in samples for row in csv_rows(s)}
     assert labels and labels <= set(contract.label_map)
