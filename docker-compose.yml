@@ -15,5 +15,18 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
 
+  app:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@db:5432/cicnids
+    ports:
+      - "8501:8501"
+    depends_on:
+      db:
+        condition: service_healthy
+
 volumes:
   pgdata:
