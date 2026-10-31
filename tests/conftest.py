@@ -93,3 +93,20 @@ def bucket(monkeypatch):
         client = boto3.client("s3", region_name="us-east-1")
         client.create_bucket(Bucket="cicnids-test")
         yield Bucket("cicnids-test", client)
+
+
+@pytest.fixture(scope="session")
+def simulated_csv(tmp_path_factory):
+    """A simulated real-traffic file made from the Wednesday sample.
+
+    Tests use this instead of tests/contracts/broken/, because the demo moves that sample once
+    the simulated contract is merged.
+    """
+    from pathlib import Path
+
+    from scripts.make_simulated import make_simulated
+
+    wed = Path(__file__).parent / "contracts/cse-cic-ids2018/wednesday-14-02-2018.csv"
+    path = tmp_path_factory.mktemp("simulated") / "simulated-real-traffic-01.csv"
+    make_simulated(wed, path, rows=200)
+    return path
