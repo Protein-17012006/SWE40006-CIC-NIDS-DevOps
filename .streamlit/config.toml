@@ -7,3 +7,7 @@ font = "sans serif"
 
 [browser]
 gatherUsageStats = false
+
+[client]
+# Hide the developer menu and the Deploy button from dashboard users
+toolbarMode = "minimal"
