@@ -46,6 +46,15 @@ read_params() {
   grep -Ev '^[[:space:]]*(#|$)' "$file"
 }
 
+# container_overrides CONTAINER ARG...: ECS RunTask overrides that run ARG... in CONTAINER.
+# The arguments reach jq on stdin, one per line, so ones like -m are never read as jq options.
+container_overrides() {
+  local name=$1
+  shift
+  printf '%s\n' "$@" |
+    jq -cRn --arg name "$name" '{containerOverrides: [{name: $name, command: [inputs]}]}'
+}
+
 # deploy_stack STACK TEMPLATE ENVIRONMENT_TAG [Key=Value ...]: create or update a stack through
 # the CloudFormation execution role; on failure, print the events that explain it.
 deploy_stack() {
