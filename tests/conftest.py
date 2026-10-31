@@ -1,4 +1,8 @@
+import os
+import uuid
+
 import pytest
+import sqlalchemy as sa
 
 
 @pytest.fixture
@@ -13,3 +17,35 @@ def settings_env(monkeypatch):
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
+
+
+@pytest.fixture(scope="session")
+def admin_url():
+    """Superuser URL that creates and drops the per-test databases; skips db tests without it."""
+    url = os.environ.get("TEST_ADMIN_DATABASE_URL")
+    if not url:
+        pytest.skip("TEST_ADMIN_DATABASE_URL is not set")
+    return url
+
+
+@pytest.fixture
+def empty_db_url(admin_url):
+    name = f"cicnids_t_{uuid.uuid4().hex[:8]}"
+    admin = sa.create_engine(admin_url, isolation_level="AUTOCOMMIT")
+    with admin.connect() as conn:
+        conn.execute(sa.text(f'CREATE DATABASE "{name}"'))
+    url = sa.make_url(admin_url).set(database=name).render_as_string(hide_password=False)
+    try:
+        yield url
+    finally:
+        with admin.connect() as conn:
+            conn.execute(sa.text(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)'))
+        admin.dispose()
+
+
+@pytest.fixture
+def migrated_db_url(empty_db_url):
+    from pipeline.migrate import upgrade
+
+    upgrade(empty_db_url)
+    return empty_db_url
