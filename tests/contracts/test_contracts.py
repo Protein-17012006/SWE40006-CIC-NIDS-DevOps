@@ -6,17 +6,13 @@ from pathlib import Path
 import pytest
 import yaml
 
+from pipeline.clean import read_header
 from pipeline.contracts import closest_contract, load_contracts, match_contract, missing_fields
 
 HERE = Path(__file__).parent
 BROKEN = HERE / "broken"
 SAMPLES = sorted(p for p in HERE.glob("*/*.csv") if p.parent != BROKEN)
 EXPECTED = yaml.safe_load((BROKEN / "expected.yaml").read_text(encoding="utf-8"))
-
-
-def read_header(path: Path) -> list[str]:
-    with path.open(newline="", encoding="utf-8-sig") as f:
-        return next(csv.reader(f))
 
 
 def csv_rows(path: Path) -> list[list[str]]:
