@@ -1,0 +1,61 @@
+name: Deploy
+
+# Deploys one image tag to one environment. The job runs in that GitHub environment, so
+# production waits here for a reviewer's approval (OPS-03).
+on:
+  workflow_call:
+    inputs:
+      environment:
+        type: string
+        required: true
+      image_tag:
+        type: string
+        required: true
+      run_migrations:
+        type: boolean
+        default: true
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    name: ${{ inputs.environment }}
+    runs-on: ubuntu-24.04
+    environment:
+      name: ${{ inputs.environment }}
+      url: ${{ steps.url.outputs.url }}
+    concurrency:
+      group: deploy-${{ inputs.environment }}
+      cancel-in-progress: false
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      ENVIRONMENT: ${{ inputs.environment }}
+      IMAGE_TAG: ${{ inputs.image_tag }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/cicnids-gha-deploy-${{ inputs.environment }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Deploy the image
+        env:
+          RUN_MIGRATIONS: ${{ inputs.run_migrations }}
+        run: |
+          if [ "$RUN_MIGRATIONS" = "true" ]; then
+            bash scripts/ci/deploy_env.sh "$ENVIRONMENT" "$IMAGE_TAG"
+          else
+            bash scripts/ci/deploy_env.sh "$ENVIRONMENT" "$IMAGE_TAG" --skip-migrations
+          fi
+      - name: Environment URL
+        id: url
+        run: |
+          source scripts/ci/lib.sh
+          host=$(stack_output cicnids-platform AlbDnsName)
+          port=$(stack_output "cicnids-$ENVIRONMENT" ListenerPort)
+          echo "url=http://$host:$port/" >> "$GITHUB_OUTPUT"
+      - name: Environment parity
+        if: inputs.environment == 'production'
+        run: bash scripts/ci/parity.sh
