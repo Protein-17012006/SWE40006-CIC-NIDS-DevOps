@@ -19,6 +19,24 @@ def settings_env(monkeypatch):
     get_settings.cache_clear()
 
 
+def _clear_caches() -> None:
+    import streamlit as st
+
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+    st.cache_data.clear()
+    st.cache_resource.clear()
+
+
+@pytest.fixture
+def clear_caches():
+    """Gives the test a function that resets settings and Streamlit caches; runs again after it."""
+    _clear_caches()
+    yield _clear_caches
+    _clear_caches()
+
+
 @pytest.fixture(scope="session")
 def admin_url():
     """Superuser URL that creates and drops the per-test databases; skips db tests without it."""
