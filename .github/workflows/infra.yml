@@ -1,0 +1,75 @@
+name: Infrastructure
+
+# The shared stacks. A pull request shows their change sets; main deploys them after approval
+# in the platform environment. Environment stacks are deployed by deploy.yml with each release.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - infra/bootstrap.yaml
+      - infra/platform.yaml
+      - infra/databases.yaml
+      - scripts/ci/lib.sh
+      - scripts/ci/preview_changes.sh
+      - scripts/ci/deploy_shared.sh
+      - .github/workflows/infra.yml
+  push:
+    branches: [main]
+    paths:
+      - infra/bootstrap.yaml
+      - infra/platform.yaml
+      - infra/databases.yaml
+      - scripts/ci/lib.sh
+      - scripts/ci/deploy_shared.sh
+      - .github/workflows/infra.yml
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+
+jobs:
+  preview:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/cicnids-gha-preview
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Preview cicnids-platform
+        env:
+          ALERT_EMAIL: ${{ vars.ALERT_EMAIL }}
+        run: bash scripts/ci/preview_changes.sh cicnids-platform infra/platform.yaml "AlertEmail=$ALERT_EMAIL"
+      - name: Preview cicnids-databases
+        run: bash scripts/ci/preview_changes.sh cicnids-databases infra/databases.yaml
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    environment: platform
+    concurrency:
+      group: infra-deploy
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+      - name: Remind that the bootstrap stack is deployed from a laptop
+        run: |
+          if ! git diff --quiet HEAD^ HEAD -- infra/bootstrap.yaml 2>/dev/null; then
+            echo "::notice::infra/bootstrap.yaml changed; deploy it from a laptop (docs/runbook.md)"
+          fi
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/cicnids-gha-platform
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Deploy cicnids-platform and cicnids-databases
+        env:
+          ALERT_EMAIL: ${{ vars.ALERT_EMAIL }}
+        run: bash scripts/ci/deploy_shared.sh
