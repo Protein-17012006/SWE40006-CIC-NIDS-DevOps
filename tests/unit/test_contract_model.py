@@ -87,6 +87,7 @@ def test_contract_rejects_missing_required_field():
         ({"label_map": {"Worm": "Worm"}}, "Worm"),
         ({"protocol": "TODO"}, "TODO"),
         ({"label_map": {"Benign": "TODO"}}, "TODO"),
+        ({"timestamp_format": "TODO"}, "TODO"),
     ],
 )
 def test_contract_rejects_unknown_field_category_and_todo(bad, word):

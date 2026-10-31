@@ -89,6 +89,8 @@ class Contract(BaseModel):
 
     @model_validator(mode="after")
     def _check_pairs(self) -> "Contract":
+        if self.timestamp_format == TODO:
+            raise ValueError("timestamp_format is still marked TODO")
         if ("timestamp" in self.fields) != (self.timestamp_format is not None):
             raise ValueError("timestamp_format is needed exactly when timestamp is mapped")
         if ("label" in self.fields) != bool(self.label_map):
