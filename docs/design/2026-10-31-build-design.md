@@ -1,6 +1,6 @@
 # Build design: CIC-NIDS dashboard and pipeline
 
-Draft for approval · 31 October 2026
+Approved by Hoàng on 31 October 2026, with the answers recorded in section 1
 
 This design fixes what the team needs to build the whole system in this repository. The requirements document (ING, UI, NFR and OPS requirements) and the Design and Requirements Report (app and UI design) remain the source of truth. This document covers what they leave open: the ingestion job, the AWS infrastructure, the pipeline, and the five open questions in section 8 of the report. Section 1 lists what Hoàng decided; everything else is the builder's call and can change on review.
 
@@ -12,6 +12,9 @@ This design fixes what the team needs to build the whole system in this reposito
 | Every resource lives in us-east-1. | Hoàng, 31 Oct; brief |
 | The code lives in the public repository Protein-17012006/SWE40006-CIC-NIDS-DevOps. | Hoàng, 31 Oct; brief |
 | Four environments on ECS Fargate behind one load balancer; CloudFormation; GitHub Actions signing in through OIDC; CloudWatch; USD 200 of credit. | Brief |
+| Pull requests merge once CI is green; no approving review is required. Production still waits for an approval in its GitHub environment (OPS-03). | Hoàng, 31 Oct |
+| No alert email for now. The SNS topic and the budget exist, and an email subscription is an optional stack parameter. | Hoàng, 31 Oct |
+| Hoàng stops and starts environments by hand to control cost, so there is no scheduled scale-to-zero (OPS-08 is dropped for now). | Hoàng, 31 Oct |
 
 ## 2. Goals, non-goals and anti-goals
 
@@ -33,22 +36,22 @@ This design fixes what the team needs to build the whole system in this reposito
 | Stack | Template | What it holds | Deployed by |
 | --- | --- | --- | --- |
 | cicnids-bootstrap | infra/bootstrap.yaml | GitHub OIDC provider; GitHub Actions roles (build, change-set preview, platform, one deploy role per environment); the CloudFormation execution role | Hoàng, once, from a laptop |
-| cicnids-platform | infra/platform.yaml | VPC 10.20.0.0/16 over two Availability Zones (two public and two private subnets, internet gateway, S3 gateway endpoint, no NAT gateway); the load balancer and its security group; ECR repository `cic-nids`; ECS clusters `cicnids-prod` and `cicnids-nonprod`; SNS topic `cicnids-alerts`; a USD 200 budget with alerts at 50, 100 and 150 | infra.yml |
+| cicnids-platform | infra/platform.yaml | VPC 10.20.0.0/16 over two Availability Zones (two public and two private subnets, internet gateway, S3 gateway endpoint, no NAT gateway); the load balancer and its security group; ECR repository `cic-nids`; ECS clusters `cicnids-prod` and `cicnids-nonprod`; SNS topic `cicnids-alerts` with an optional email subscription; a USD 200 budget whose alerts at 50, 100 and 150 publish to that topic | infra.yml |
 | cicnids-databases | infra/databases.yaml | Two RDS PostgreSQL 16 db.t4g.micro instances, production and non-production (shared by development, test and staging); 20 GB gp3, single-AZ, private subnets; master passwords managed by RDS in Secrets Manager; 7-day backups; snapshot on delete | infra.yml |
-| cicnids-&lt;env&gt;, one per environment | infra/environment.yaml with infra/params/&lt;env&gt;.json | S3 bucket; secrets; task, execution and EventBridge roles; log group; security group and its RDS ingress rule; target group and listener; job, admin and app task definitions; ECS service; EventBridge rule; scheduled scaling; metric filters, alarms and dashboard (staging and production) | deploy.yml, on every release |
+| cicnids-&lt;env&gt;, one per environment | infra/environment.yaml with infra/params/&lt;env&gt;.json | S3 bucket; secrets; task, execution and EventBridge roles; log group; security group and its RDS ingress rule; target group and listener; job, admin and app task definitions; ECS service; EventBridge rule; metric filters, alarms and dashboard | deploy.yml, on every release |
 
 The databases have their own stack, so no platform or environment change can replace them. The environment template changes through the same promotion as code: an edit reaches development first and production last.
 
 ### 3.2 Environments
 
-| Environment | Cluster | Port | App task | Database (instance / name) | Data | Off at night |
-| --- | --- | --- | --- | --- | --- | --- |
-| development | cicnids-nonprod | 8082 | 0.25 vCPU, 1 GB | non-production / cicnids_development | One day file cut to 100,000 rows | Yes |
-| test | cicnids-nonprod | 8081 | 0.25 vCPU, 1 GB | non-production / cicnids_test | End-to-end files of every known format, reset on each run | Yes |
-| staging | cicnids-nonprod | 8080 | 0.5 vCPU, 1 GB | non-production / cicnids_staging | Full CSE-CIC-IDS2018 | Yes |
-| production | cicnids-prod | 80 | 0.5 vCPU, 1 GB | production / cicnids_production | Full baseline plus simulated real-traffic files | No |
+| Environment | Cluster | Port | App task | Database (instance / name) | Data |
+| --- | --- | --- | --- | --- | --- |
+| development | cicnids-nonprod | 8082 | 0.25 vCPU, 1 GB | non-production / cicnids_development | One day file cut to 100,000 rows |
+| test | cicnids-nonprod | 8081 | 0.25 vCPU, 1 GB | non-production / cicnids_test | End-to-end files of every known format, reset on each run |
+| staging | cicnids-nonprod | 8080 | 0.5 vCPU, 1 GB | non-production / cicnids_staging | Full CSE-CIC-IDS2018 |
+| production | cicnids-prod | 80 | 0.5 vCPU, 1 GB | production / cicnids_production | Full baseline plus simulated real-traffic files |
 
-The job task (ingestion, migrations, end-to-end tests) has 2 vCPU, 8 GB and 20 GB of ephemeral storage. The admin task (database bootstrap) has 0.25 vCPU and 0.5 GB. Non-production services run from 08:00 to 23:00 Asia/Ho_Chi_Minh through Application Auto Scaling scheduled actions (OPS-08). Container Insights is on for `cicnids-prod` only, behind a platform parameter (section 8).
+The job task (ingestion, migrations, end-to-end tests) has 2 vCPU, 8 GB and 20 GB of ephemeral storage. The admin task (database bootstrap) has 0.25 vCPU and 0.5 GB. Container Insights is on for `cicnids-prod` only, behind a platform parameter: it is the largest CloudWatch cost, and the Level 2 evidence needs it only for production.
 
 ### 3.3 Network and security
 
@@ -75,7 +78,7 @@ The deployment contract in report section 3.3 holds, with one change. ECS inject
 | rollback.yml | Manual: environment and tag | Calls deploy.yml with the earlier tag and without migrations. Its summary lists the last ten tags (OPS-05). |
 | ingest.yml | Manual: environment and either an S3 key or `reconcile` | Runs the job task and prints its log (ING-01 on demand, ING-09). |
 
-The GitHub environments development, test and staging have no reviewers; production and platform need approval from Hoàng. Branch protection on main requires a pull request and the CI checks.
+The GitHub environments development, test and staging have no reviewers; production and platform need approval from Hoàng. Branch protection on main requires a pull request and green CI checks, but no approving review.
 
 ### 4.2 One deployment
 
@@ -88,7 +91,7 @@ deploy.yml applies changes in the order the brief fixes: infrastructure, migrati
 5. Smoke test: the service is stable, its running task definition carries the tag, and `/_stcore/health` on the environment's port answers 200 within two minutes (OPS-07).
 6. In test, run the job task `e2e` and wait for it. In the other environments, start `reconcile` without waiting.
 
-If a non-production service is scaled to zero at night, the workflow raises its capacity to one first; the next scheduled action lowers it again.
+If Hoàng stopped the service by hand, deploy.yml sets its desired count back to one first, so the smoke test always has a task to check.
 
 ## 5. Ingestion
 
@@ -167,23 +170,11 @@ Report section 7.1 stands, with three decisions:
 ## 8. Monitoring and cost
 
 - **Logs.** One log group per environment, `/cicnids/<env>`, kept for 14 days, with one JSON object per line.
-- **Metrics.** Metric filters turn the logs of staging and production into four metrics in the `CICNIDS` namespace, each with an Environment dimension: page render time, ingestion duration, rejected rows and failed ingestions (NFR-05).
-- **Alarms.** In staging and production, alarms on the 5xx count, CPU above 80%, memory above 85%, unhealthy targets and failed ingestion email the team through SNS (OPS-06). Development and test keep logs only, so short-lived test runs never send email.
-- **Dashboards.** One each for staging and production; production's is the demo dashboard.
+- **Metrics.** Metric filters turn each environment's logs into four metrics in the `CICNIDS` namespace, with an Environment dimension: page render time, ingestion duration, rejected rows and failed ingestions (NFR-05).
+- **Alarms.** Each environment has alarms on the 5xx count, CPU above 80%, memory above 85%, unhealthy targets and failed ingestion. They publish to the SNS topic, which emails the team once an address is subscribed (OPS-06).
+- **Dashboards.** One per environment; production's is the demo dashboard.
 
-Estimated spend for five weeks in us-east-1. These are approximate figures from list prices remembered as of October 2026, to check weekly against Cost Explorer:
-
-| Item | USD |
-| --- | --- |
-| Fargate app services, with non-production on 15 hours a day | 49 |
-| Public IPv4 addresses (tasks and load balancer) | 21 |
-| Application Load Balancer | 21 |
-| RDS: two db.t4g.micro instances with 20 GB each | 32 |
-| CloudWatch: Container Insights for the last two weeks, custom metrics, alarms, logs | 14 |
-| Secrets Manager (10 secrets), ECR, S3, job tasks | 7 |
-| **Total** | **about 144** |
-
-Running non-production around the clock adds about USD 22, and Container Insights for all five weeks adds about 12. Every stack is deleted after grading (brief section 5.1).
+**Cost.** Hoàng controls spend by hand, stopping environments when they are idle. With everything running around the clock for five weeks, the estimate is about USD 180, so the USD 200 credit holds. The figure is approximate, from list prices remembered as of October 2026; Cost Explorer is the check. The largest items are Fargate (about 66), RDS (32), CloudWatch (26), public IPv4 addresses (25) and the load balancer (21). Every stack is deleted after grading (brief section 5.1).
 
 ## 9. Repository layout
 
@@ -208,8 +199,3 @@ The image holds `app/`, `pipeline/`, `contracts/`, `migrations/` and `tests/e2e/
 2. **Data.** The schema migration, contracts, ingestion, the EventBridge trigger, reconcile and ingest.yml; the baseline load into staging and production; the simulated files.
 3. **Pages**, in the report's order: Overview with the guard and the unlabelled state, Timeline, Targets, the rest of Pipeline, Data quality, Feature explorer.
 4. **Operations.** Metric filters, alarms and dashboards checked; end-to-end tests in test; Locust; a rollback drill; a demo rehearsal; then the Could items (CSV download, upload card).
-
-## 11. Open questions for Hoàng
-
-1. **Pull-request approvals.** The brief promises reviewed pull requests, but GitHub does not let anyone approve their own pull request. Either main requires one approval from Thiên Anh on every pull request, or it requires only the CI checks.
-2. **Alert email.** Which address or addresses should receive alarm and budget emails? It is stored as a GitHub variable, never committed.
