@@ -225,6 +225,10 @@ Resources:
                   - s3:GetObject
                   - s3:PutObject
                 Resource: !Sub ${Bucket.Arn}/*
+              # A re-ingested file replaces its Parquet parts; raw/ is never deleted
+              - Effect: Allow
+                Action: s3:DeleteObject
+                Resource: !Sub ${Bucket.Arn}/processed/*
 
   AppTaskDefinition:
     Type: AWS::ECS::TaskDefinition
@@ -381,6 +385,73 @@ Resources:
           Enable: true
           Rollback: true
 
+  # EventBridge starts the job task for every file that lands in raw/ (ING-01).
+  EventsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub cicnids-${EnvName}-events
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: run-ingestion-job
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: ecs:RunTask
+                Resource: !Sub arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/cicnids-${EnvName}-job:*
+                Condition:
+                  ArnEquals:
+                    ecs:cluster: !Sub arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:cluster/${ClusterName}
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource:
+                  - !GetAtt ExecutionRole.Arn
+                  - !GetAtt TaskRole.Arn
+
+  IngestRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub cicnids-${EnvName}-ingest
+      Description: !Sub Ingest each CSV file uploaded to raw/ in the ${EnvName} bucket
+      EventPattern:
+        source: [aws.s3]
+        detail-type: [Object Created]
+        detail:
+          bucket:
+            name: [!Ref Bucket]
+          object:
+            key: [{prefix: raw/}]
+      Targets:
+        - Id: ingest
+          Arn: !Sub arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:cluster/${ClusterName}
+          RoleArn: !GetAtt EventsRole.Arn
+          EcsParameters:
+            TaskDefinitionArn: !Ref JobTaskDefinition
+            TaskCount: 1
+            LaunchType: FARGATE
+            PlatformVersion: LATEST
+            NetworkConfiguration:
+              AwsVpcConfiguration:
+                AssignPublicIp: ENABLED
+                SecurityGroups:
+                  - !Ref TaskSecurityGroup
+                Subnets: !Split
+                  - ","
+                  - Fn::ImportValue: !Sub ${PlatformStack}-PublicSubnetIds
+          InputTransformer:
+            InputPathsMap:
+              key: $.detail.object.key
+            InputTemplate: '{"containerOverrides":[{"name":"job","command":["python","-m","pipeline","ingest","--key","<key>"]}]}'
+          RetryPolicy:
+            MaximumRetryAttempts: 5
+            MaximumEventAgeInSeconds: 3600
+
 Outputs:
   ServiceName:
     Value: !GetAtt Service.Name
@@ -398,3 +469,5 @@ Outputs:
     Value: !Sub cicnids-${EnvName}-job
   AdminTaskFamily:
     Value: !Sub cicnids-${EnvName}-admin
+  IngestRuleName:
+    Value: !Ref IngestRule
