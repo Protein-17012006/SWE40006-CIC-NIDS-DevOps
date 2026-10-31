@@ -1,0 +1,75 @@
+name: CD
+
+# Build once, then promote the same image: development, test and staging automatically,
+# production after approval (OPS-03). A manual run from another branch deploys development only.
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: tag
+        run: echo "tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/cicnids-gha-build
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Build once and push to ECR
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: bash scripts/ci/push_image.sh "$TAG"
+
+  development:
+    needs: build
+    uses: ./.github/workflows/deploy.yml
+    secrets: inherit
+    with:
+      environment: development
+      image_tag: ${{ needs.build.outputs.tag }}
+
+  test:
+    needs: [build, development]
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/deploy.yml
+    secrets: inherit
+    with:
+      environment: test
+      image_tag: ${{ needs.build.outputs.tag }}
+
+  staging:
+    needs: [build, test]
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/deploy.yml
+    secrets: inherit
+    with:
+      environment: staging
+      image_tag: ${{ needs.build.outputs.tag }}
+
+  production:
+    needs: [build, staging]
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/deploy.yml
+    secrets: inherit
+    with:
+      environment: production
+      image_tag: ${{ needs.build.outputs.tag }}

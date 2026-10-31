@@ -1,0 +1,27 @@
+name: Rollback
+
+# Redeploys an earlier image tag to one environment, without migrations (OPS-05).
+# The summary of the run lists the newest ten tags.
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        options: [production, staging, test, development]
+      image_tag:
+        description: Image tag to redeploy, a 7-character commit hash
+        type: string
+        required: true
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  rollback:
+    uses: ./.github/workflows/deploy.yml
+    secrets: inherit
+    with:
+      environment: ${{ inputs.environment }}
+      image_tag: ${{ inputs.image_tag }}
+      run_migrations: false
