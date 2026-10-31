@@ -1,0 +1,5 @@
+EnvName=development
+ListenerPort=8082
+DbTier=Nonprod
+ClusterName=cicnids-nonprod
+AppCpu=256

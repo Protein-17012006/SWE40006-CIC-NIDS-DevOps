@@ -1,0 +1,5 @@
+EnvName=production
+ListenerPort=80
+DbTier=Prod
+ClusterName=cicnids-prod
+AppCpu=512

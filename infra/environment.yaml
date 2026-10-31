@@ -1,0 +1,400 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  One CIC-NIDS environment: its bucket, secrets, roles, logs, load balancer listener, task
+  definitions and ECS service. deploy.yml updates it on every release, first with the new
+  JobImageTag (for migrations) and then with the new AppImageTag.
+
+Parameters:
+  EnvName:
+    Type: String
+    AllowedValues: [development, test, staging, production]
+  ListenerPort:
+    Type: Number
+    Description: The load balancer port this environment answers on
+  DbTier:
+    Type: String
+    AllowedValues: [Prod, Nonprod]
+    Description: Which RDS instance holds this environment's database
+  ClusterName:
+    Type: String
+  AppCpu:
+    Type: String
+    AllowedValues: ["256", "512"]
+  AppMemory:
+    Type: String
+    Default: "1024"
+  AppImageTag:
+    Type: String
+    Description: Image tag the dashboard service runs (a 7-character commit hash)
+  JobImageTag:
+    Type: String
+    Description: Image tag the one-off job and admin tasks run
+  DesiredCount:
+    Type: Number
+    Default: 1
+  PlatformStack:
+    Type: String
+    Default: cicnids-platform
+  DatabasesStack:
+    Type: String
+    Default: cicnids-databases
+
+Resources:
+  # raw/ for uploads (never edited), processed/ for Parquet, quarantine/ for reports
+  Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub cicnids-${EnvName}-${AWS::AccountId}
+      NotificationConfiguration:
+        EventBridgeConfiguration:
+          EventBridgeEnabled: true
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /cicnids/${EnvName}
+      RetentionInDays: 14
+
+  # Secret names end with the stack's id: Secrets Manager keeps a deleted name for at least
+  # 7 days, which would block deleting and recreating this stack (OPS-01).
+  DbSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub
+        - cicnids/${EnvName}/db-${StackUuid}
+        - StackUuid: !Select [2, !Split ["/", !Ref AWS::StackId]]
+      Description: !Sub Database role and connection details for ${EnvName}
+      GenerateSecretString:
+        SecretStringTemplate: !Sub
+          - '{"username": "cicnids_${EnvName}", "dbname": "cicnids_${EnvName}", "host": "${Host}", "port": ${Port}}'
+          - Host:
+              Fn::ImportValue: !Sub ${DatabasesStack}-${DbTier}Endpoint
+            Port:
+              Fn::ImportValue: !Sub ${DatabasesStack}-${DbTier}Port
+        GenerateStringKey: password
+        PasswordLength: 32
+        ExcludePunctuation: true
+
+  UploadPasswordSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub
+        - cicnids/${EnvName}/upload-password-${StackUuid}
+        - StackUuid: !Select [2, !Split ["/", !Ref AWS::StackId]]
+      Description: !Sub Shared password for the upload card in ${EnvName}
+      GenerateSecretString:
+        PasswordLength: 24
+        ExcludePunctuation: true
+
+  TaskSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub CIC-NIDS ${EnvName} tasks; only the load balancer reaches the app
+      VpcId:
+        Fn::ImportValue: !Sub ${PlatformStack}-VpcId
+      SecurityGroupIngress:
+        - Description: load balancer
+          IpProtocol: tcp
+          FromPort: 8501
+          ToPort: 8501
+          SourceSecurityGroupId:
+            Fn::ImportValue: !Sub ${PlatformStack}-AlbSecurityGroupId
+      Tags:
+        - Key: Name
+          Value: !Sub cicnids-${EnvName}-tasks
+
+  DbIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: !Sub CIC-NIDS ${EnvName} tasks
+      GroupId:
+        Fn::ImportValue: !Sub ${DatabasesStack}-${DbTier}SecurityGroupId
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      SourceSecurityGroupId: !GetAtt TaskSecurityGroup.GroupId
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId:
+        Fn::ImportValue: !Sub ${PlatformStack}-VpcId
+      Protocol: HTTP
+      Port: 8501
+      TargetType: ip
+      HealthCheckPath: /_stcore/health
+      Matcher:
+        HttpCode: "200"
+      HealthCheckIntervalSeconds: 15
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: "30"
+
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn:
+        Fn::ImportValue: !Sub ${PlatformStack}-AlbArn
+      Port: !Ref ListenerPort
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub cicnids-${EnvName}-exec
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: read-environment-secrets
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref DbSecret
+                  - !Ref UploadPasswordSecret
+
+  # Only the admin task (db-bootstrap) may read the RDS master secret.
+  AdminExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub cicnids-${EnvName}-admin-exec
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: read-database-secrets
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref DbSecret
+                  - Fn::ImportValue: !Sub ${DatabasesStack}-${DbTier}MasterSecretArn
+
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub cicnids-${EnvName}-task
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: own-bucket
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: !GetAtt Bucket.Arn
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource: !Sub ${Bucket.Arn}/*
+
+  AppTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub cicnids-${EnvName}-app
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      Cpu: !Ref AppCpu
+      Memory: !Ref AppMemory
+      RuntimePlatform:
+        OperatingSystemFamily: LINUX
+        CpuArchitecture: X86_64
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      ContainerDefinitions:
+        - Name: app
+          Image: !Sub
+            - ${Repository}:${AppImageTag}
+            - Repository:
+                Fn::ImportValue: !Sub ${PlatformStack}-EcrRepositoryUri
+          Essential: true
+          PortMappings:
+            - ContainerPort: 8501
+              Protocol: tcp
+          Environment:
+            - Name: APP_ENV
+              Value: !Ref EnvName
+            - Name: APP_VERSION
+              Value: !Ref AppImageTag
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
+            - Name: S3_BUCKET
+              Value: !Ref Bucket
+          Secrets:
+            - Name: DB_SECRET
+              ValueFrom: !Ref DbSecret
+            - Name: UPLOAD_PASSWORD
+              ValueFrom: !Ref UploadPasswordSecret
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: app
+
+  # Ingestion, migrations and the end-to-end tests; the command is overridden per run.
+  JobTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub cicnids-${EnvName}-job
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      Cpu: "2048"
+      Memory: "8192"
+      RuntimePlatform:
+        OperatingSystemFamily: LINUX
+        CpuArchitecture: X86_64
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      ContainerDefinitions:
+        - Name: job
+          Image: !Sub
+            - ${Repository}:${JobImageTag}
+            - Repository:
+                Fn::ImportValue: !Sub ${PlatformStack}-EcrRepositoryUri
+          Essential: true
+          Command: [python, -m, pipeline, --help]
+          Environment:
+            - Name: APP_ENV
+              Value: !Ref EnvName
+            - Name: APP_VERSION
+              Value: !Ref JobImageTag
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
+            - Name: S3_BUCKET
+              Value: !Ref Bucket
+          Secrets:
+            - Name: DB_SECRET
+              ValueFrom: !Ref DbSecret
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: job
+
+  AdminTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub cicnids-${EnvName}-admin
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      Cpu: "256"
+      Memory: "512"
+      RuntimePlatform:
+        OperatingSystemFamily: LINUX
+        CpuArchitecture: X86_64
+      ExecutionRoleArn: !GetAtt AdminExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: admin
+          Image: !Sub
+            - ${Repository}:${JobImageTag}
+            - Repository:
+                Fn::ImportValue: !Sub ${PlatformStack}-EcrRepositoryUri
+          Essential: true
+          Command: [python, -m, pipeline, db-bootstrap]
+          Environment:
+            - Name: APP_ENV
+              Value: !Ref EnvName
+            - Name: APP_VERSION
+              Value: !Ref JobImageTag
+          Secrets:
+            - Name: DB_SECRET
+              ValueFrom: !Ref DbSecret
+            - Name: DB_MASTER_SECRET
+              ValueFrom:
+                Fn::ImportValue: !Sub ${DatabasesStack}-${DbTier}MasterSecretArn
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: admin
+
+  # Rolling replacement: new tasks pass the health check before old ones stop (NFR-02).
+  Service:
+    Type: AWS::ECS::Service
+    DependsOn: Listener
+    Properties:
+      ServiceName: !Sub cicnids-${EnvName}
+      Cluster: !Ref ClusterName
+      LaunchType: FARGATE
+      PlatformVersion: LATEST
+      TaskDefinition: !Ref AppTaskDefinition
+      DesiredCount: !Ref DesiredCount
+      HealthCheckGracePeriodSeconds: 60
+      PropagateTags: SERVICE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+            - !Ref TaskSecurityGroup
+          Subnets: !Split
+            - ","
+            - Fn::ImportValue: !Sub ${PlatformStack}-PublicSubnetIds
+      LoadBalancers:
+        - ContainerName: app
+          ContainerPort: 8501
+          TargetGroupArn: !Ref TargetGroup
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 100
+        MaximumPercent: 200
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+
+Outputs:
+  ServiceName:
+    Value: !GetAtt Service.Name
+  ClusterName:
+    Value: !Ref ClusterName
+  ListenerPort:
+    Value: !Ref ListenerPort
+  TaskSecurityGroupId:
+    Value: !GetAtt TaskSecurityGroup.GroupId
+  BucketName:
+    Value: !Ref Bucket
+  LogGroupName:
+    Value: !Ref LogGroup
+  JobTaskFamily:
+    Value: !Sub cicnids-${EnvName}-job
+  AdminTaskFamily:
+    Value: !Sub cicnids-${EnvName}-admin

@@ -1,0 +1,5 @@
+EnvName=test
+ListenerPort=8081
+DbTier=Nonprod
+ClusterName=cicnids-nonprod
+AppCpu=256
