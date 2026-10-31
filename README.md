@@ -14,6 +14,17 @@ A Streamlit dashboard that turns the [CSE-CIC-IDS2018](https://www.unb.ca/cic/da
 | Infrastructure as code | AWS CloudFormation |
 | Operations | Amazon CloudWatch, Amazon SNS, AWS Budgets |
 
+## Environments
+
+| Environment | URL |
+| --- | --- |
+| production | http://cicnids-1239707461.us-east-1.elb.amazonaws.com/ |
+| staging | http://cicnids-1239707461.us-east-1.elb.amazonaws.com:8080 |
+| test | http://cicnids-1239707461.us-east-1.elb.amazonaws.com:8081 |
+| development | http://cicnids-1239707461.us-east-1.elb.amazonaws.com:8082 |
+
+The [runbook](docs/runbook.md) covers setup, releases, rollback, stopping environments and teardown. The [build design](docs/design/2026-10-31-build-design.md) explains the architecture.
+
 ## Run it locally
 
 The app runs on a laptop with no AWS account. You need Docker Desktop, and Python 3.12 for the tests.
@@ -45,4 +56,4 @@ streamlit run app/main.py
 
 ## Status
 
-Work in progress: the shell, the schema and the container are in place; the CI/CD pipeline and the pages come next.
+Milestone 1 (walking skeleton) is live: the app shell runs in all four environments, deployed by the pipeline with a production approval gate. Next: data ingestion (milestone 2), then the dashboard pages.
