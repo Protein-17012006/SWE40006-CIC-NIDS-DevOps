@@ -1,0 +1,43 @@
+name: Ingest
+
+# Runs the ingestion job once in one environment and prints its log: one file from raw/
+# (ING-01 on demand), reconcile with the deployed contracts (ING-09), or the status of each
+# dataset. The job runs in that GitHub environment, so production waits for approval.
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        options: [development, test, staging, production]
+      target:
+        description: An S3 key under raw/, reconcile, or status
+        type: string
+        required: true
+        default: status
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  ingest:
+    name: ${{ inputs.environment }}
+    runs-on: ubuntu-24.04
+    environment: ${{ inputs.environment }}
+    concurrency:
+      group: ingest-${{ inputs.environment }}
+      cancel-in-progress: false
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+      ENVIRONMENT: ${{ inputs.environment }}
+      # Inputs reach the script as variables, never spliced into the command line
+      TARGET: ${{ inputs.target }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/cicnids-gha-deploy-${{ inputs.environment }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Run the ingestion job
+        run: bash scripts/ci/ingest.sh "$ENVIRONMENT" "$TARGET"

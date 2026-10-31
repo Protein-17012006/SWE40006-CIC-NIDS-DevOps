@@ -36,7 +36,7 @@ These steps were done once on 31 October 2026; repeat them only for a new accoun
 
 1. Open a pull request. CI runs lint, tests with coverage, cfn-lint, and a Docker build with a Trivy scan. A pull request that touches the shared templates also gets a change-set preview in its Infrastructure run summary.
 2. Merge when the checks are green. CD builds the image once, tags it with the commit hash and pushes it to ECR.
-3. For each environment, `scripts/ci/deploy_env.sh` updates the stack with the new job image, runs `db-bootstrap` and the migrations as one-off ECS tasks, updates the stack with the new app image, and runs the smoke test.
+3. For each environment, `scripts/ci/deploy_env.sh` updates the stack with the new job image, runs `db-bootstrap` and the migrations as one-off ECS tasks, updates the stack with the new app image, runs the smoke test, and starts `reconcile` without waiting for it.
 4. Development, test and staging deploy in turn. Production waits in the CD run until a reviewer opens it, chooses **Review deployments** and approves `production`. The production job then writes a parity table: the tag each environment runs.
 
 Changes to `docs/` or Markdown files do not start CD. Changes to the shared templates start the Infrastructure workflow, which waits for approval in `platform`.
@@ -44,6 +44,45 @@ Changes to `docs/` or Markdown files do not start CD. Changes to the shared temp
 ## Roll back
 
 Run the **Rollback** workflow with the environment and the earlier tag. It redeploys that image without migrations; migrations only add before they remove, so an older image keeps working against the newer schema. The run summary lists the newest ten tags. Production still needs approval.
+
+A rollback also skips `reconcile`, and the upload rule then starts the older image's job. An image older than milestone 2 (2a5a429 and before) has no `ingest` command, so upload nothing to `raw/` while an environment runs one.
+
+## Load data
+
+Each environment's bucket is `cicnids-<env>-<account id>`. A CSV that lands in `raw/` starts the job task within a minute or two, through the EventBridge rule `cicnids-<env>-ingest`. The job reads the file in 100,000-row chunks, cleans it, and then either loads it or quarantines it:
+
+- **Loaded.** Cleaned rows go to `processed/<dataset>/<file>/part-NNNN.parquet`; aggregates and a sample go to PostgreSQL.
+- **Quarantined.** No contract matches the header, more than 20% of the rows fail validation, or the file has no rows. The report and a draft contract go to `quarantine/<dataset>/<file>/`, and the CSV stays in `raw/`.
+
+The dataset is the first folder under `raw/` (`raw/cse-cic-ids2018/<day>.csv`), or the file's own name when it sits directly in `raw/`.
+
+**The baseline.** Run this from the laptop. It copies the files one at a time and waits for each ingestion run, with the 4 GB file last; it skips any file already in `raw/`, so it can be run again after an interruption.
+
+```bash
+export AWS_PROFILE=hoang
+scripts/load_baseline.sh development   # the first 100,000 rows of 14 February
+scripts/load_baseline.sh staging       # the ten day files, about one to two hours
+scripts/load_baseline.sh production
+```
+
+**Simulated real traffic.** Download one day file and derive the simulated file from it. Write it outside the repository: full files are never committed.
+
+```bash
+aws s3 cp --no-sign-request "s3://cse-cic-ids2018/Processed Traffic Data for ML Algorithms/Friday-16-02-2018_TrafficForML_CICFlowMeter.csv" /tmp/friday-16.csv
+python -m scripts.make_simulated /tmp/friday-16.csv /tmp/simulated-real-traffic-01.csv
+aws s3 cp /tmp/simulated-real-traffic-01.csv s3://cicnids-staging-<account id>/raw/simulated-real-traffic-01.csv
+```
+
+**The Ingest workflow.** Run it with an environment and one of three targets: an S3 key under `raw/` ingests that file again; `reconcile` re-ingests every file whose stored header now matches a different contract or contract version; `status` logs each dataset's status, row count and files, and the size of each table. Production waits for approval. The run prints the job's log, in which every run is one `ingestion_run` line.
+
+## Demo: merge the simulated contract
+
+The simulated file starts out quarantined, because no contract in `contracts/` matches it. During the demo:
+
+1. Download `quarantine/simulated-real-traffic-01/simulated-real-traffic-01/draft-contract.yaml` and save it as `contracts/simulated-real-traffic.yaml`. It is the same as `tests/fixtures/contracts/simulated-real-traffic.yaml`.
+2. Move `tests/contracts/broken/simulated-real-traffic-01.csv` to `tests/contracts/simulated-real-traffic/`, and delete its entry in `tests/contracts/broken/expected.yaml`.
+3. Open a pull request. The contract tests check that the sample now matches its contract.
+4. After the merge, each deployment starts `reconcile`, which loads the quarantined file without a new upload. Label-based charts are hidden for it, because the file has no label.
 
 ## Stop and start environments by hand
 
@@ -60,7 +99,7 @@ A deployment to a stopped environment starts one task first, so its smoke test h
 ## Account limits met on the way
 
 - New repositories sign OIDC tokens with immutable subjects; trust policies must use `repo:OWNER@ID/REPO@ID:...`.
-- An AWS free account plan rejects RDS backups longer than one day and allows two RDS instances at a time, counting instances that are still being deleted. The project account is on the paid plan, but the templates keep one-day backups.
+- An AWS free account plan rejects RDS backups longer than one day and allows two RDS instances at a time, counting instances that are still being deleted. The project account is on the paid plan, so the templates keep seven days of backups.
 - A stack whose first creation fails is left in ROLLBACK_COMPLETE; the deploy scripts delete such an empty stack before retrying.
 
 ## Tear everything down after grading

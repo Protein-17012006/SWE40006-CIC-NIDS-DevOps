@@ -13,13 +13,13 @@ on:
       - scripts/ci/preview_changes.sh
       - scripts/ci/deploy_shared.sh
       - .github/workflows/infra.yml
+  # lib.sh changes how stacks deploy, not what they hold, so on its own it starts no deployment
   push:
     branches: [main]
     paths:
       - infra/bootstrap.yaml
       - infra/platform.yaml
       - infra/databases.yaml
-      - scripts/ci/lib.sh
       - scripts/ci/deploy_shared.sh
       - .github/workflows/infra.yml
   workflow_dispatch:
