@@ -20,6 +20,7 @@ permissions:
 jobs:
   rollback:
     uses: ./.github/workflows/deploy.yml
+    secrets: inherit
     with:
       environment: ${{ inputs.environment }}
       image_tag: ${{ inputs.image_tag }}
