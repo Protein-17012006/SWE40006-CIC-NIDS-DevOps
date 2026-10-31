@@ -5,10 +5,13 @@ Description: >-
   GitHub Actions through these roles.
 
 Parameters:
-  GitHubRepo:
+  # The repository uses GitHub's immutable OIDC subjects, which carry the owner and repository
+  # ids, so a renamed or recreated repository with the same name cannot assume these roles.
+  # Read it with: gh api repos/OWNER/REPO/actions/oidc/customization/sub --jq .sub_claim_prefix
+  GitHubSubjectPrefix:
     Type: String
-    Default: Protein-17012006/SWE40006-CIC-NIDS-DevOps
-    Description: owner/name of the repository whose workflows may assume these roles
+    Default: repo:Protein-17012006@193206418/SWE40006-CIC-NIDS-DevOps@1440630321
+    Description: OIDC subject prefix of the repository whose workflows may assume these roles
 
 Resources:
   GitHubOidcProvider:
@@ -49,7 +52,7 @@ Resources:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
               StringLike:
-                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubRepo}:ref:refs/heads/*
+                token.actions.githubusercontent.com:sub: !Sub ${GitHubSubjectPrefix}:ref:refs/heads/*
       Policies:
         - PolicyName: push-images
           PolicyDocument:
@@ -87,7 +90,7 @@ Resources:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
               StringLike:
-                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubRepo}:pull_request
+                token.actions.githubusercontent.com:sub: !Sub ${GitHubSubjectPrefix}:pull_request
       Policies:
         - PolicyName: preview-changes
           PolicyDocument:
@@ -124,7 +127,7 @@ Resources:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
               StringLike:
-                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubRepo}:environment:platform
+                token.actions.githubusercontent.com:sub: !Sub ${GitHubSubjectPrefix}:environment:platform
       Policies:
         - PolicyName: deploy-shared-stacks
           PolicyDocument:
@@ -163,7 +166,7 @@ Resources:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
               StringLike:
-                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubRepo}:environment:development
+                token.actions.githubusercontent.com:sub: !Sub ${GitHubSubjectPrefix}:environment:development
       Policies:
         - PolicyName: deploy-development
           PolicyDocument:
@@ -227,7 +230,7 @@ Resources:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
               StringLike:
-                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubRepo}:environment:test
+                token.actions.githubusercontent.com:sub: !Sub ${GitHubSubjectPrefix}:environment:test
       Policies:
         - PolicyName: deploy-test
           PolicyDocument:
@@ -291,7 +294,7 @@ Resources:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
               StringLike:
-                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubRepo}:environment:staging
+                token.actions.githubusercontent.com:sub: !Sub ${GitHubSubjectPrefix}:environment:staging
       Policies:
         - PolicyName: deploy-staging
           PolicyDocument:
@@ -355,7 +358,7 @@ Resources:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
               StringLike:
-                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubRepo}:environment:production
+                token.actions.githubusercontent.com:sub: !Sub ${GitHubSubjectPrefix}:environment:production
       Policies:
         - PolicyName: deploy-production
           PolicyDocument:
