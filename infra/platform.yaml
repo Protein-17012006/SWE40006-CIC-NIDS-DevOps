@@ -1,0 +1,322 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  CIC-NIDS platform shared by all four environments: network, load balancer, image registry,
+  ECS clusters, the alerts topic and the USD 200 credit budget.
+
+Parameters:
+  ContainerInsightsProd:
+    Type: String
+    AllowedValues: [enabled, disabled]
+    Default: enabled
+    Description: Container Insights on the production cluster, the largest CloudWatch cost
+  AlertEmail:
+    Type: String
+    Default: ""
+    Description: Optional address subscribed to the alerts topic; AWS sends it a confirmation email
+
+Conditions:
+  HasAlertEmail: !Not [!Equals [!Ref AlertEmail, ""]]
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.20.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: cicnids
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: cicnids
+
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  # Tasks run in the public subnets with public IPs, so no NAT gateway is needed.
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.20.0.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: cicnids-public-a
+
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.20.1.0/24
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: cicnids-public-b
+
+  # RDS only: no route to the internet.
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.20.10.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: cicnids-private-a
+
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.20.11.0/24
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: cicnids-private-b
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: cicnids-public
+
+  PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetARoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetA
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetBRoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetB
+      RouteTableId: !Ref PublicRouteTable
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: cicnids-private
+
+  PrivateSubnetARoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetA
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnetBRoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetB
+      RouteTableId: !Ref PrivateRouteTable
+
+  S3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+      VpcEndpointType: Gateway
+      RouteTableIds:
+        - !Ref PublicRouteTable
+        - !Ref PrivateRouteTable
+
+  AlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Dashboard load balancer, one port per environment
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - Description: production
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - Description: staging, test and development
+          IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8082
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: cicnids-alb
+
+  # Idle timeout 300 s so Streamlit's WebSockets survive quiet periods.
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    DependsOn: GatewayAttachment
+    Properties:
+      Name: cicnids
+      Type: application
+      Scheme: internet-facing
+      Subnets:
+        - !Ref PublicSubnetA
+        - !Ref PublicSubnetB
+      SecurityGroups:
+        - !Ref AlbSecurityGroup
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: "300"
+
+  Repository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: cic-nids
+      ImageTagMutability: IMMUTABLE
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EmptyOnDelete: true
+      LifecyclePolicy:
+        LifecyclePolicyText: >-
+          {"rules": [{"rulePriority": 1, "description": "Keep the newest 30 images",
+          "selection": {"tagStatus": "any", "countType": "imageCountMoreThan", "countNumber": 30},
+          "action": {"type": "expire"}}]}
+
+  ProdCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: cicnids-prod
+      ClusterSettings:
+        - Name: containerInsights
+          Value: !Ref ContainerInsightsProd
+
+  NonprodCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: cicnids-nonprod
+      ClusterSettings:
+        - Name: containerInsights
+          Value: disabled
+
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: cicnids-alerts
+
+  AlertTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref AlertTopic
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AlarmsAndBudgetsPublish
+            Effect: Allow
+            Principal:
+              Service:
+                - budgets.amazonaws.com
+                - cloudwatch.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref AlertTopic
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+
+  AlertSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlertEmail
+    Properties:
+      TopicArn: !Ref AlertTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+  # The credit covers the whole project, so the budget is annual rather than monthly (NFR-08).
+  CreditBudget:
+    Type: AWS::Budgets::Budget
+    DependsOn: AlertTopicPolicy
+    Properties:
+      Budget:
+        BudgetName: cicnids-credit
+        BudgetType: COST
+        TimeUnit: ANNUALLY
+        BudgetLimit:
+          Amount: 200
+          Unit: USD
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 50
+            ThresholdType: ABSOLUTE_VALUE
+          Subscribers:
+            - SubscriptionType: SNS
+              Address: !Ref AlertTopic
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+            ThresholdType: ABSOLUTE_VALUE
+          Subscribers:
+            - SubscriptionType: SNS
+              Address: !Ref AlertTopic
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 150
+            ThresholdType: ABSOLUTE_VALUE
+          Subscribers:
+            - SubscriptionType: SNS
+              Address: !Ref AlertTopic
+
+Outputs:
+  VpcId:
+    Value: !Ref Vpc
+    Export:
+      Name: !Sub ${AWS::StackName}-VpcId
+  PublicSubnetIds:
+    Value: !Join [",", [!Ref PublicSubnetA, !Ref PublicSubnetB]]
+    Export:
+      Name: !Sub ${AWS::StackName}-PublicSubnetIds
+  PrivateSubnetIds:
+    Value: !Join [",", [!Ref PrivateSubnetA, !Ref PrivateSubnetB]]
+    Export:
+      Name: !Sub ${AWS::StackName}-PrivateSubnetIds
+  AlbArn:
+    Value: !Ref LoadBalancer
+    Export:
+      Name: !Sub ${AWS::StackName}-AlbArn
+  AlbDnsName:
+    Value: !GetAtt LoadBalancer.DNSName
+    Export:
+      Name: !Sub ${AWS::StackName}-AlbDnsName
+  AlbSecurityGroupId:
+    Value: !GetAtt AlbSecurityGroup.GroupId
+    Export:
+      Name: !Sub ${AWS::StackName}-AlbSecurityGroupId
+  EcrRepositoryUri:
+    Value: !GetAtt Repository.RepositoryUri
+    Export:
+      Name: !Sub ${AWS::StackName}-EcrRepositoryUri
+  ProdClusterName:
+    Value: !Ref ProdCluster
+    Export:
+      Name: !Sub ${AWS::StackName}-ProdClusterName
+  NonprodClusterName:
+    Value: !Ref NonprodCluster
+    Export:
+      Name: !Sub ${AWS::StackName}-NonprodClusterName
+  AlertTopicArn:
+    Value: !Ref AlertTopic
+    Export:
+      Name: !Sub ${AWS::StackName}-AlertTopicArn
