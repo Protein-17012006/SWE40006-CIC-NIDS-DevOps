@@ -17,6 +17,13 @@ if ! stack_exists "$stack"; then
     "$stack" >>"$summary"
   exit 0
 fi
+status=$(aws cloudformation describe-stacks --stack-name "$stack" \
+  --query 'Stacks[0].StackStatus' --output text)
+if [[ "$status" == ROLLBACK_COMPLETE ]]; then
+  printf '### %s\n\nThe stack failed to create earlier; it is deleted and created again when this change reaches main.\n\n' \
+    "$stack" >>"$summary"
+  exit 0
+fi
 
 # Given parameters take their new values; every other parameter keeps its current value.
 given=" "
