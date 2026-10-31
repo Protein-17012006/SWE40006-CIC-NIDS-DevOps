@@ -47,6 +47,10 @@ Run the **Rollback** workflow with the environment and the earlier tag. It redep
 
 A rollback also skips `reconcile`, and the upload rule then starts the older image's job. An image older than milestone 2 (2a5a429 and before) has no `ingest` command, so upload nothing to `raw/` while an environment runs one.
 
+A CD run that waits at the production gate holds the production deployment lock, so a Rollback run started after it stays pending. Open the CD run, choose **Review deployments** and reject `production` first.
+
+The drill on 31 October 2026 rolled production back from 336613d to 2a5a429 in 6 min 54 s, from approval to a passing smoke test, and forward to 4e8d1a7 in 7 min.
+
 ## Load data
 
 Each environment's bucket is `cicnids-<env>-<account id>`. A CSV that lands in `raw/` starts the job task within a minute or two, through the EventBridge rule `cicnids-<env>-ingest`. The job reads the file in 100,000-row chunks, cleans it, and then either loads it or quarantines it:
@@ -54,16 +58,18 @@ Each environment's bucket is `cicnids-<env>-<account id>`. A CSV that lands in `
 - **Loaded.** Cleaned rows go to `processed/<dataset>/<file>/part-NNNN.parquet`; aggregates and a sample go to PostgreSQL.
 - **Quarantined.** No contract matches the header, more than 20% of the rows fail validation, or the file has no rows. The report and a draft contract go to `quarantine/<dataset>/<file>/`, and the CSV stays in `raw/`.
 
-The dataset is the first folder under `raw/` (`raw/cse-cic-ids2018/<day>.csv`), or the file's own name when it sits directly in `raw/`.
+The dataset is the first folder under `raw/` (`raw/cse-cic-ids2018/<day>.csv`), or the file's own name when it sits directly in `raw/`. Keys may contain spaces: the rule passes the key exactly as it was uploaded.
 
 **The baseline.** Run this from the laptop. It copies the files one at a time and waits for each ingestion run, with the 4 GB file last; it skips any file already in `raw/`, so it can be run again after an interruption.
 
 ```bash
 export AWS_PROFILE=hoang
 scripts/load_baseline.sh development   # the first 100,000 rows of 14 February
-scripts/load_baseline.sh staging       # the ten day files, about one to two hours
+scripts/load_baseline.sh staging       # the ten day files, about 25 minutes
 scripts/load_baseline.sh production
 ```
+
+On 31 October 2026, each environment's load took about 25 minutes. It yielded 15,822,222 flows: 16,233,002 rows read, with exact duplicates and repeated header rows dropped and 14 rows rejected. The 4 GB day file took 5 to 6 minutes in one job task. PostgreSQL holds about 47 MB of aggregates and samples.
 
 **Simulated real traffic.** Download one day file and derive the simulated file from it. Write it outside the repository: full files are never committed.
 
