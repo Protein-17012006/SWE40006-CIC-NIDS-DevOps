@@ -1,0 +1,7 @@
+# Each file here must match no contract; the ingestion job quarantines it for this reason.
+missing-dst-port.csv:
+  missing: [dst_port]
+  closest: cse-cic-ids2018
+simulated-real-traffic-01.csv:
+  missing: [dst_port, fwd_packets, bwd_packets, fwd_bytes, bwd_bytes]
+  closest: cse-cic-ids2018

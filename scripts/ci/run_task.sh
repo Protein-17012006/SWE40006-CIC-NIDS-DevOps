@@ -1,12 +1,19 @@
 #!/usr/bin/env bash
-# run_task.sh ENV KIND [COMMAND...]: run the environment's one-off task (KIND is job or admin),
-# wait until it stops, print its log, and exit with the container's exit code.
+# run_task.sh [--no-wait] ENV KIND [COMMAND...]: run the environment's one-off task (KIND is job
+# or admin), wait until it stops, print its log, and exit with the container's exit code.
+# --no-wait returns once ECS has accepted the task. The wait ends after TASK_TIMEOUT_MINUTES
+# (default 30).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 # shellcheck source=scripts/ci/lib.sh
 source scripts/ci/lib.sh
 
-usage="usage: run_task.sh ENV job|admin [COMMAND...]"
+usage="usage: run_task.sh [--no-wait] ENV job|admin [COMMAND...]"
+wait_for_task=true
+if [[ "${1:-}" == --no-wait ]]; then
+  wait_for_task=false
+  shift
+fi
 env_name=${1:?$usage}
 kind=${2:?$usage}
 shift 2
@@ -32,14 +39,19 @@ if [[ -z "$task_arn" || "$task_arn" == "None" ]]; then
 fi
 task_id=${task_arn##*/}
 log "started $family task $task_id: ${*:-default command}"
+if [[ "$wait_for_task" == false ]]; then
+  log "not waiting for task $task_id; its log is in $log_group"
+  exit 0
+fi
 
-deadline=$((SECONDS + 1800))
+timeout_minutes=${TASK_TIMEOUT_MINUTES:-30}
+deadline=$((SECONDS + timeout_minutes * 60))
 while true; do
   status=$(aws ecs describe-tasks --cluster "$cluster" --tasks "$task_arn" \
     --query 'tasks[0].lastStatus' --output text)
   [[ "$status" == STOPPED ]] && break
   if ((SECONDS > deadline)); then
-    log "task $task_id is still $status after 30 minutes"
+    log "task $task_id is still $status after $timeout_minutes minutes"
     exit 1
   fi
   sleep 10

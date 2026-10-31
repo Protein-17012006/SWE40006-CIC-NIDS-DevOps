@@ -62,3 +62,11 @@ deploy_stack "$stack" infra/environment.yaml "$env_name" "${params[@]}" \
 
 # 5. Smoke test (OPS-07)
 bash scripts/ci/smoke_test.sh "$env_name" "$tag"
+
+# 6. Re-ingest the files the new contracts read differently (ING-09), without waiting.
+#    Rollbacks skip it: an older image may not have the command.
+if [[ "$skip_migrations" == true ]]; then
+  log "rollback: not starting reconcile"
+else
+  bash scripts/ci/run_task.sh --no-wait "$env_name" job python -m pipeline reconcile
+fi

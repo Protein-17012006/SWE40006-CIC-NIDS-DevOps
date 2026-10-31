@@ -67,3 +67,29 @@ def migrated_db_url(empty_db_url):
 
     upgrade(empty_db_url)
     return empty_db_url
+
+
+@pytest.fixture
+def engine(migrated_db_url):
+    """An engine on a freshly migrated test database."""
+    engine = sa.create_engine(migrated_db_url)
+    yield engine
+    engine.dispose()
+
+
+@pytest.fixture
+def bucket(monkeypatch):
+    """The environment bucket as an in-memory S3 (moto); no request leaves the machine."""
+    import boto3
+    from moto import mock_aws
+
+    from pipeline.storage import Bucket
+
+    for name in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"):
+        monkeypatch.setenv(name, "testing")
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
+    monkeypatch.delenv("AWS_PROFILE", raising=False)
+    with mock_aws():
+        client = boto3.client("s3", region_name="us-east-1")
+        client.create_bucket(Bucket="cicnids-test")
+        yield Bucket("cicnids-test", client)
