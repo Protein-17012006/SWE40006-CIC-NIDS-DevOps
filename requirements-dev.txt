@@ -3,3 +3,4 @@ pytest-cov==7.1.0
 ruff==0.17.3
 cfn-lint==1.59.0
 actionlint-py==1.7.12.25
+moto[s3]==5.2.5
