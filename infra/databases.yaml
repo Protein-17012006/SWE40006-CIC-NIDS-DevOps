@@ -1,0 +1,123 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  CIC-NIDS databases: one RDS PostgreSQL 16 instance for production and one shared by
+  development, test and staging, each environment with its own database and role. They live in
+  their own stack so no platform or environment change can replace them.
+
+Parameters:
+  PlatformStack:
+    Type: String
+    Default: cicnids-platform
+
+Resources:
+  DbSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: CIC-NIDS private subnets
+      SubnetIds: !Split
+        - ","
+        - Fn::ImportValue: !Sub ${PlatformStack}-PrivateSubnetIds
+
+  # No ingress here: each environment stack lets in its own tasks, so production RDS accepts
+  # only production tasks (NFR-03).
+  ProdDbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Production RDS, reachable only from production tasks
+      VpcId:
+        Fn::ImportValue: !Sub ${PlatformStack}-VpcId
+      Tags:
+        - Key: Name
+          Value: cicnids-db-prod
+
+  NonprodDbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Non-production RDS, reachable only from development, test and staging tasks
+      VpcId:
+        Fn::ImportValue: !Sub ${PlatformStack}-VpcId
+      Tags:
+        - Key: Name
+          Value: cicnids-db-nonprod
+
+  ProdDatabase:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: cicnids-prod
+      Engine: postgres
+      EngineVersion: "16.15"
+      DBInstanceClass: db.t4g.micro
+      AllocatedStorage: "20"
+      StorageType: gp3
+      StorageEncrypted: true
+      MultiAZ: false
+      PubliclyAccessible: false
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      VPCSecurityGroups:
+        - !GetAtt ProdDbSecurityGroup.GroupId
+      MasterUsername: cicnids_admin
+      ManageMasterUserPassword: true
+      BackupRetentionPeriod: 7
+      AutoMinorVersionUpgrade: true
+      CopyTagsToSnapshot: true
+      DeletionProtection: false
+
+  NonprodDatabase:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: cicnids-nonprod
+      Engine: postgres
+      EngineVersion: "16.15"
+      DBInstanceClass: db.t4g.micro
+      AllocatedStorage: "20"
+      StorageType: gp3
+      StorageEncrypted: true
+      MultiAZ: false
+      PubliclyAccessible: false
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      VPCSecurityGroups:
+        - !GetAtt NonprodDbSecurityGroup.GroupId
+      MasterUsername: cicnids_admin
+      ManageMasterUserPassword: true
+      BackupRetentionPeriod: 7
+      AutoMinorVersionUpgrade: true
+      CopyTagsToSnapshot: true
+      DeletionProtection: false
+
+Outputs:
+  ProdEndpoint:
+    Value: !GetAtt ProdDatabase.Endpoint.Address
+    Export:
+      Name: !Sub ${AWS::StackName}-ProdEndpoint
+  ProdPort:
+    Value: !GetAtt ProdDatabase.Endpoint.Port
+    Export:
+      Name: !Sub ${AWS::StackName}-ProdPort
+  ProdMasterSecretArn:
+    Value: !GetAtt ProdDatabase.MasterUserSecret.SecretArn
+    Export:
+      Name: !Sub ${AWS::StackName}-ProdMasterSecretArn
+  ProdSecurityGroupId:
+    Value: !GetAtt ProdDbSecurityGroup.GroupId
+    Export:
+      Name: !Sub ${AWS::StackName}-ProdSecurityGroupId
+  NonprodEndpoint:
+    Value: !GetAtt NonprodDatabase.Endpoint.Address
+    Export:
+      Name: !Sub ${AWS::StackName}-NonprodEndpoint
+  NonprodPort:
+    Value: !GetAtt NonprodDatabase.Endpoint.Port
+    Export:
+      Name: !Sub ${AWS::StackName}-NonprodPort
+  NonprodMasterSecretArn:
+    Value: !GetAtt NonprodDatabase.MasterUserSecret.SecretArn
+    Export:
+      Name: !Sub ${AWS::StackName}-NonprodMasterSecretArn
+  NonprodSecurityGroupId:
+    Value: !GetAtt NonprodDbSecurityGroup.GroupId
+    Export:
+      Name: !Sub ${AWS::StackName}-NonprodSecurityGroupId
