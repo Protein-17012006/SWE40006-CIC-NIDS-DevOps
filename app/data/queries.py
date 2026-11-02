@@ -372,44 +372,79 @@ def _field_value(f: Filters, field: str) -> tuple[str, dict[str, object]]:
     raise ValueError(f"unknown field {field!r}")
 
 
+# Enough sampled rows to tell a numeric extra from a text one without reading every row
+EXTRAS_PROBE_ROWS = 500
+STAT_COLUMNS = ["samples", "p5", "q1", "median", "q3", "p95", "mean"]
+
+
 @st.cache_data(ttl=300)
-def numeric_extras(f: Filters) -> pd.DataFrame:
-    """Extra fields whose sampled values are numbers, less the columns found constant."""
-    sampled = _scoped(
-        "SELECT key AS field FROM flow_sample, jsonb_each(extras) WHERE {where} GROUP BY key "
+def _numeric_extras(dataset_id: str, extra_fields: tuple[str, ...]) -> pd.DataFrame:
+    sampled = _read(
+        "WITH probe AS (SELECT extras FROM flow_sample WHERE dataset_id = :dataset_id "
+        "LIMIT :rows) SELECT key AS field FROM probe, jsonb_each(extras) GROUP BY key "
         "HAVING BOOL_AND(jsonb_typeof(value) IN ('number', 'null')) "
         "AND BOOL_OR(jsonb_typeof(value) = 'number') ORDER BY key",
-        f,
-        time="ts",
-        categories=False,
+        dataset_id=dataset_id,
+        rows=EXTRAS_PROBE_ROWS,
     )
-    issues = column_issues(f.dataset_id)
+    issues = column_issues(dataset_id)
     constant = set(issues.loc[issues["action"] == "constant, hidden", "column_name"])
-    keep = sampled["field"].isin(f.extra_fields) & ~sampled["field"].isin(constant)
+    keep = sampled["field"].isin(extra_fields) & ~sampled["field"].isin(constant)
     return sampled[keep].reset_index(drop=True)
 
 
+def numeric_extras(f: Filters) -> pd.DataFrame:
+    """Extra fields whose sampled values are numbers, less the columns found constant.
+
+    It depends only on the dataset, so changing the other filters does not run it again.
+    """
+    return _numeric_extras(f.dataset_id, tuple(f.extra_fields))
+
+
+def _percentiles(prefix: str, only: str) -> str:
+    """The statistics columns, all over one field's values or FILTERed to some of them."""
+    where = f" FILTER (WHERE {only})" if only else ""
+    within = [
+        f"percentile_cont({q}) WITHIN GROUP (ORDER BY v){where} AS {prefix}{name}"
+        for q, name in ((0.05, "p5"), (0.25, "q1"), (0.5, "median"), (0.75, "q3"), (0.95, "p95"))
+    ]
+    return ", ".join(
+        [f"COUNT(*){where} AS {prefix}samples", *within, f"AVG(v){where} AS {prefix}mean"]
+    )
+
+
 @st.cache_data(ttl=300)
-def field_stats(f: Filters, field: str, positive_only: bool) -> pd.DataFrame:
-    """Percentiles and mean of one field per category; positive_only for a log scale."""
+def _field_stats(f: Filters, field: str) -> pd.DataFrame:
     value, params = _field_value(f, field)
+    # Every value, and values above 0 for a log scale, in one pass over the sample
     return _scoped(
-        "SELECT attack_category, COUNT(*) AS samples, "
-        "percentile_cont(0.05) WITHIN GROUP (ORDER BY v) AS p5, "
-        "percentile_cont(0.25) WITHIN GROUP (ORDER BY v) AS q1, "
-        "percentile_cont(0.5) WITHIN GROUP (ORDER BY v) AS median, "
-        "percentile_cont(0.75) WITHIN GROUP (ORDER BY v) AS q3, "
-        "percentile_cont(0.95) WITHIN GROUP (ORDER BY v) AS p95, AVG(v) AS mean "
+        "SELECT attack_category, {every}, {positive} "
         "FROM (SELECT attack_category, {value} AS v FROM flow_sample WHERE {where}) sampled "
-        "WHERE v IS NOT NULL AND (NOT :positive_only OR v > 0) GROUP BY attack_category "
+        "WHERE v IS NOT NULL GROUP BY attack_category "
         "ORDER BY array_position(CAST(:order AS text[]), attack_category)",
         f,
         time="ts",
-        fragments={"value": value},
-        positive_only=positive_only,
+        fragments={
+            "value": value,
+            "every": _percentiles("", ""),
+            "positive": _percentiles("positive_", "v > 0"),
+        },
         order=list(ATTACK_CATEGORIES),
         **params,
     )
+
+
+def field_stats(f: Filters, field: str, positive_only: bool) -> pd.DataFrame:
+    """Percentiles and mean of one field per category; positive_only for a log scale.
+
+    Both versions come from one cached query, since the page shows both on every rerun.
+    """
+    stats = _field_stats(f, field)
+    if not positive_only:
+        return stats[["attack_category", *STAT_COLUMNS]].reset_index(drop=True)
+    positive = stats[stats["positive_samples"] > 0]
+    renamed = positive[["attack_category", *(f"positive_{c}" for c in STAT_COLUMNS)]]
+    return renamed.set_axis(["attack_category", *STAT_COLUMNS], axis=1).reset_index(drop=True)
 
 
 @st.cache_data(ttl=300)

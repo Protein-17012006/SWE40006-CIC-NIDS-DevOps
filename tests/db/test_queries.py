@@ -286,3 +286,25 @@ def test_field_histogram(filters_for):
     bins = field_histogram(filters_for(), "flow_duration_us", True)
     assert bins.groupby("attack_category")["samples"].sum().eq(5).all()
     assert (bins["bin_end"] > bins["bin_start"]).all() and bins["bin_start"].min() > 0
+
+
+@pytest.mark.db
+def test_feature_explorer_reads_the_database_once_per_question(filters_for, monkeypatch):
+    """The page asks for the field list and both sets of statistics on every rerun: the field
+    list must not depend on the categories, and the two statistics come from one query."""
+    from app.data import queries
+
+    every, ddos = filters_for(), filters_for(categories=["DDoS"])
+    sql: list[str] = []
+    real_read = queries._read
+
+    def counting_read(query, **params):
+        sql.append(query)
+        return real_read(query, **params)
+
+    monkeypatch.setattr(queries, "_read", counting_read)
+    assert numeric_extras(every)["field"].tolist() == ["fwd_pkt_len_max"]
+    assert numeric_extras(ddos)["field"].tolist() == ["fwd_pkt_len_max"]
+    field_stats(every, "fwd_pkt_len_max", True)
+    field_stats(every, "fwd_pkt_len_max", False)
+    assert len(sql) == 3  # the extras probe, the column issues, one statistics query
