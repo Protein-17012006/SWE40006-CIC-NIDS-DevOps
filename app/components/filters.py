@@ -13,7 +13,7 @@ import streamlit as st
 
 from app.data.fields import ATTACK_ONLY
 from app.data.queries import loaded_datasets
-from app.telemetry import log_event
+from app.telemetry import first_line, log_event
 
 DATASET_KEY = "filter_dataset"
 DATES_KEY = "filter_dates"
@@ -95,16 +95,11 @@ def current_filters(datasets: pd.DataFrame, state: Mapping[str, object]) -> Filt
     )
 
 
-def _first_line(exc: Exception) -> str:
-    text = str(exc)
-    return text.splitlines()[0] if text else type(exc).__name__
-
-
 def _datasets_or_none() -> pd.DataFrame | None:
     try:
         return loaded_datasets()
     except Exception as exc:  # unreachable, or not migrated yet
-        log_event("query_failed", level="ERROR", query="loaded_datasets", message=_first_line(exc))
+        log_event("query_failed", level="ERROR", query="loaded_datasets", message=first_line(exc))
         return None
 
 
