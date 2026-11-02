@@ -46,10 +46,6 @@ def kpi_tile(label: str, value: str, caption: str) -> None:
         st.caption(caption)
 
 
-def coming_soon(requirement_ids: str) -> None:
-    st.info(f"This page arrives in a later release ({requirement_ids}).")
-
-
 def load_or_warn(what: str, load: Callable[[], pd.DataFrame]) -> pd.DataFrame | None:
     """Run one of the page's queries; on failure log it, show CARD_FAILED and return None."""
     try:

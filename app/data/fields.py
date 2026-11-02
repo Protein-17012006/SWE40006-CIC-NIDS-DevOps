@@ -62,3 +62,14 @@ QUALITY_STEPS: tuple[str, ...] = (
     "repeated_headers_dropped",
     "labels_trimmed",
 )
+
+# The canonical numeric fields the Feature explorer compares: name to (label, unit)
+NUMERIC_FIELDS: dict[str, tuple[str, str]] = {
+    "flow_duration_us": ("Flow duration", "µs"),
+    "fwd_packets": ("Forward packets", "pkt"),
+    "bwd_packets": ("Backward packets", "pkt"),
+    "fwd_bytes": ("Forward bytes", "B"),
+    "bwd_bytes": ("Backward bytes", "B"),
+    "flow_bytes_per_s": ("Bytes per second", "B/s"),
+    "flow_packets_per_s": ("Packets per second", "pkt/s"),
+}
