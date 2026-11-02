@@ -14,6 +14,8 @@ from app.data.queries import (
     column_issues,
     dataset_files,
     datasets_table,
+    field_histogram,
+    field_stats,
     flows_by_category,
     flows_per_hour,
     flows_per_hour_on,
@@ -21,6 +23,7 @@ from app.data.queries import (
     last_ingestion_run,
     loaded_datasets,
     main_ports,
+    numeric_extras,
     protocol_mix,
     quarantined_files,
     recent_runs,
@@ -237,6 +240,72 @@ def test_cleaning_steps(use_seeded_db):
 def test_column_issues(use_seeded_db):
     assert column_issues("cse-cic-ids2018").values.tolist() == [
         ["flow_bytes_per_s", 7, 20, "infinite set to null"],
+        ["flow_packets_per_s", 0, 20, "infinite set to null"],
         ["bwd_psh_flags", 0, 0, "constant, hidden"],
     ]
     assert column_issues("simulated-real-traffic-01").empty
+
+
+@pytest.mark.db
+def test_field_stats(filters_for):
+    from app.data.fields import ATTACK_CATEGORIES
+
+    stats = field_stats(filters_for(), "flow_duration_us", False).set_index("attack_category")
+    assert stats.loc["Benign", ["samples", "median", "mean"]].tolist() == [5, 30000, 30000]
+    assert stats.loc["DDoS", "median"] == 6000
+    assert stats.index.tolist() == list(ATTACK_CATEGORIES)
+
+
+@pytest.mark.db
+def test_field_stats_positive_only(filters_for):  # Review Focus 3
+    def median(positive_only):
+        stats = field_stats(filters_for(), "bwd_packets", positive_only)
+        return stats.set_index("attack_category").loc["Benign", "median"]
+
+    assert (median(False), median(True)) == (1.0, 2.0)
+
+
+@pytest.mark.db
+def test_text_extras_not_offered(filters_for):  # Review Focus 5
+    assert numeric_extras(filters_for())["field"].tolist() == ["fwd_pkt_len_max"]
+    assert numeric_extras(filters_for(UNLABELLED))["field"].tolist() == ["pkt_entropy"]
+    entropy = field_stats(filters_for(UNLABELLED), "pkt_entropy", False)
+    assert entropy["median"].tolist() == [3.0] and entropy["attack_category"].isna().all()
+
+
+@pytest.mark.db
+def test_unknown_field_rejected(filters_for):  # Review Focus 5
+    for field in ("flow_duration_us; DROP TABLE datasets", "geo_country_x", "label"):
+        with pytest.raises(ValueError, match="unknown field"):
+            field_stats(filters_for(), field, False)
+        with pytest.raises(ValueError, match="unknown field"):
+            field_histogram(filters_for(), field, True)
+
+
+@pytest.mark.db
+def test_field_histogram(filters_for):
+    bins = field_histogram(filters_for(), "flow_duration_us", True)
+    assert bins.groupby("attack_category")["samples"].sum().eq(5).all()
+    assert (bins["bin_end"] > bins["bin_start"]).all() and bins["bin_start"].min() > 0
+
+
+@pytest.mark.db
+def test_feature_explorer_reads_the_database_once_per_question(filters_for, monkeypatch):
+    """The page asks for the field list and both sets of statistics on every rerun: the field
+    list must not depend on the categories, and the two statistics come from one query."""
+    from app.data import queries
+
+    every, ddos = filters_for(), filters_for(categories=["DDoS"])
+    sql: list[str] = []
+    real_read = queries._read
+
+    def counting_read(query, **params):
+        sql.append(query)
+        return real_read(query, **params)
+
+    monkeypatch.setattr(queries, "_read", counting_read)
+    assert numeric_extras(every)["field"].tolist() == ["fwd_pkt_len_max"]
+    assert numeric_extras(ddos)["field"].tolist() == ["fwd_pkt_len_max"]
+    field_stats(every, "fwd_pkt_len_max", True)
+    field_stats(every, "fwd_pkt_len_max", False)
+    assert len(sql) == 3  # the extras probe, the column issues, one statistics query

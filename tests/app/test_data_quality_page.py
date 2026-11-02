@@ -12,9 +12,10 @@ def test_data_quality_labelled(run_app):
         "Rows read": "7.3 k",
         "Rows rejected": "45",
         "Duplicates removed": "100",
-        "Infinite values replaced": "20",
+        "Infinite values replaced": "40",  # values; the steps chart counts 20 rows
     }
-    assert {"2 files", "0 quarantined files", "1.4 % of rows read", "1 column"} <= set(captions(at))
+    expected = {"2 files", "0 quarantined files", "1.4 % of rows read", "2 columns"}
+    assert expected <= set(captions(at))
     assert at.caption[0].value == (
         "What the cleaning step changed in cse-cic-ids2018 · ingestion runs #1 to #3"
         " · uses only the Dataset filter"
@@ -27,7 +28,11 @@ def test_data_quality_labelled(run_app):
         at
     )
     columns = at.dataframe[0].value
-    assert columns["Column"].tolist() == ["flow_bytes_per_s", "bwd_psh_flags"]
+    assert columns["Column"].tolist() == [
+        "flow_bytes_per_s",
+        "flow_packets_per_s",
+        "bwd_psh_flags",
+    ]
     files = at.dataframe[-1].value
     assert files["Columns"].tolist() == ["15", "15"]
     assert files["Rows"].tolist() == ["3,500", "3,800"]

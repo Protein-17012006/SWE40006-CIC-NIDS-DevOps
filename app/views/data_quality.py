@@ -99,7 +99,8 @@ tiles = [
     ),
     (
         "Infinite values replaced",
-        compact(int(step_rows.get("infinite_set_to_null", 0))),
+        # values, as in the columns table; the steps chart counts rows holding any of them
+        compact(int(issues["infinite"].sum())),
         plural(infinite_columns, "column"),
     ),
 ]

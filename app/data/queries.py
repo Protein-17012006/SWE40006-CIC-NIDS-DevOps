@@ -14,7 +14,7 @@ import sqlalchemy as sa
 import streamlit as st
 
 from app.data.db import get_engine
-from app.data.fields import ATTACK_CATEGORIES, QUALITY_STEPS
+from app.data.fields import ATTACK_CATEGORIES, NUMERIC_FIELDS, QUALITY_STEPS
 from app.data.ports import protocol_name
 
 if TYPE_CHECKING:  # filters imports this module
@@ -50,14 +50,22 @@ def _scope(f: Filters, *, time: str = "hour", categories: bool = True) -> tuple[
 
 
 def _scoped(
-    template: str, f: Filters, *, time: str = "hour", categories: bool = True, **params: object
+    template: str,
+    f: Filters,
+    *,
+    time: str = "hour",
+    categories: bool = True,
+    fragments: dict[str, str] | None = None,
+    **params: object,
 ) -> pd.DataFrame:
     """Run a query whose {where} placeholder takes the viewer's filters (see _scope).
 
-    The clause is built only from constants in this module; every value is a bound parameter.
+    The clause, and any fragments, are built only from constants and whitelisted column names
+    in this module; every value is a bound parameter.
     """
     where, scope_params = _scope(f, time=time, categories=categories)
-    return _read(template.format(where=where), **scope_params, **params)
+    sql = template.format(where=where, **(fragments or {}))
+    return _read(sql, **scope_params, **params)
 
 
 @st.cache_data(ttl=300)
@@ -345,3 +353,126 @@ def column_issues(dataset_id: str) -> pd.DataFrame:
         "WHERE action IS NOT NULL ORDER BY nulls + infinite DESC, column_name",
         dataset_id=dataset_id,
     )
+
+
+# Feature explorer (UI-05): distributions from the stratified sample in flow_sample
+
+# A non-number extra reads as null, and CASE keeps the cast from ever seeing text
+_EXTRA_VALUE = (
+    "CASE WHEN jsonb_typeof(extras -> :field) = 'number' THEN (extras ->> :field)::float8 END"
+)
+
+
+def _field_value(f: Filters, field: str) -> tuple[str, dict[str, object]]:
+    """The SQL for one field's value: a whitelisted canonical column, or a bound extras key."""
+    if field in NUMERIC_FIELDS and field in f.fields:
+        return field, {}
+    if field in f.extra_fields:
+        return _EXTRA_VALUE, {"field": field}
+    raise ValueError(f"unknown field {field!r}")
+
+
+# Enough sampled rows to tell a numeric extra from a text one without reading every row
+EXTRAS_PROBE_ROWS = 500
+STAT_COLUMNS = ["samples", "p5", "q1", "median", "q3", "p95", "mean"]
+
+
+@st.cache_data(ttl=300)
+def _numeric_extras(dataset_id: str, extra_fields: tuple[str, ...]) -> pd.DataFrame:
+    sampled = _read(
+        "WITH probe AS (SELECT extras FROM flow_sample WHERE dataset_id = :dataset_id "
+        "LIMIT :rows) SELECT key AS field FROM probe, jsonb_each(extras) GROUP BY key "
+        "HAVING BOOL_AND(jsonb_typeof(value) IN ('number', 'null')) "
+        "AND BOOL_OR(jsonb_typeof(value) = 'number') ORDER BY key",
+        dataset_id=dataset_id,
+        rows=EXTRAS_PROBE_ROWS,
+    )
+    issues = column_issues(dataset_id)
+    constant = set(issues.loc[issues["action"] == "constant, hidden", "column_name"])
+    keep = sampled["field"].isin(extra_fields) & ~sampled["field"].isin(constant)
+    return sampled[keep].reset_index(drop=True)
+
+
+def numeric_extras(f: Filters) -> pd.DataFrame:
+    """Extra fields whose sampled values are numbers, less the columns found constant.
+
+    It depends only on the dataset, so changing the other filters does not run it again.
+    """
+    return _numeric_extras(f.dataset_id, tuple(f.extra_fields))
+
+
+def _percentiles(prefix: str, only: str) -> str:
+    """The statistics columns, all over one field's values or FILTERed to some of them."""
+    where = f" FILTER (WHERE {only})" if only else ""
+    within = [
+        f"percentile_cont({q}) WITHIN GROUP (ORDER BY v){where} AS {prefix}{name}"
+        for q, name in ((0.05, "p5"), (0.25, "q1"), (0.5, "median"), (0.75, "q3"), (0.95, "p95"))
+    ]
+    return ", ".join(
+        [f"COUNT(*){where} AS {prefix}samples", *within, f"AVG(v){where} AS {prefix}mean"]
+    )
+
+
+@st.cache_data(ttl=300)
+def _field_stats(f: Filters, field: str) -> pd.DataFrame:
+    value, params = _field_value(f, field)
+    # Every value, and values above 0 for a log scale, in one pass over the sample
+    return _scoped(
+        "SELECT attack_category, {every}, {positive} "
+        "FROM (SELECT attack_category, {value} AS v FROM flow_sample WHERE {where}) sampled "
+        "WHERE v IS NOT NULL GROUP BY attack_category "
+        "ORDER BY array_position(CAST(:order AS text[]), attack_category)",
+        f,
+        time="ts",
+        fragments={
+            "value": value,
+            "every": _percentiles("", ""),
+            "positive": _percentiles("positive_", "v > 0"),
+        },
+        order=list(ATTACK_CATEGORIES),
+        **params,
+    )
+
+
+def field_stats(f: Filters, field: str, positive_only: bool) -> pd.DataFrame:
+    """Percentiles and mean of one field per category; positive_only for a log scale.
+
+    Both versions come from one cached query, since the page shows both on every rerun.
+    """
+    stats = _field_stats(f, field)
+    if not positive_only:
+        return stats[["attack_category", *STAT_COLUMNS]].reset_index(drop=True)
+    positive = stats[stats["positive_samples"] > 0]
+    renamed = positive[["attack_category", *(f"positive_{c}" for c in STAT_COLUMNS)]]
+    return renamed.set_axis(["attack_category", *STAT_COLUMNS], axis=1).reset_index(drop=True)
+
+
+@st.cache_data(ttl=300)
+def field_histogram(f: Filters, field: str, log: bool, bins: int = 30) -> pd.DataFrame:
+    """Sample counts per category in equal bins; on a log scale the bins are equal in log10
+    and values of 0 or less are left out."""
+    value, params = _field_value(f, field)
+    frame = _scoped(
+        "WITH kept AS (SELECT attack_category, {scale} AS t FROM "
+        "(SELECT attack_category, {value} AS v FROM flow_sample WHERE {where}) sampled "
+        "WHERE v IS NOT NULL AND (NOT :log OR v > 0)), "
+        "bounds AS (SELECT MIN(t) AS lo, MAX(t) AS hi FROM kept) "
+        "SELECT attack_category, LEAST(width_bucket(t, lo, CASE WHEN hi > lo THEN hi "
+        "ELSE lo + 1 END, :bins), :bins) AS bucket, COUNT(*) AS samples, "
+        "MIN(lo) AS lo, MIN(CASE WHEN hi > lo THEN hi ELSE lo + 1 END) AS hi "
+        "FROM kept, bounds GROUP BY attack_category, bucket "
+        "ORDER BY array_position(CAST(:order AS text[]), attack_category), bucket",
+        f,
+        time="ts",
+        fragments={"value": value, "scale": "log(v)" if log else "v"},
+        log=log,
+        bins=bins,
+        order=list(ATTACK_CATEGORIES),
+        **params,
+    )
+    width = (frame["hi"] - frame["lo"]) / bins
+    start = frame["lo"] + (frame["bucket"] - 1) * width
+    edges = pd.DataFrame({"bin_start": start, "bin_end": start + width})
+    if log:
+        edges = 10**edges
+    return pd.concat([frame[["attack_category"]], edges, frame[["samples"]]], axis=1)

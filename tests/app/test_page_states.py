@@ -13,6 +13,7 @@ PAGES = [
     "timeline",
     "targets",
     "data_quality",
+    "feature_explorer",
 ]  # each page's pull request adds its view
 
 
