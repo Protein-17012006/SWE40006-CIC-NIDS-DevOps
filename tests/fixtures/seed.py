@@ -180,6 +180,8 @@ def _baseline_issues(infinite: int, nulls: int) -> list[ColumnIssue]:
     return [
         ColumnIssue("bwd_psh_flags", 0, 0, "constant, hidden"),
         ColumnIssue("flow_bytes_per_s", nulls, infinite, "infinite set to null"),
+        # the same rows: a zero duration makes both rates infinite
+        ColumnIssue("flow_packets_per_s", 0, infinite, "infinite set to null"),
     ]
 
 

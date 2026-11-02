@@ -240,6 +240,7 @@ def test_cleaning_steps(use_seeded_db):
 def test_column_issues(use_seeded_db):
     assert column_issues("cse-cic-ids2018").values.tolist() == [
         ["flow_bytes_per_s", 7, 20, "infinite set to null"],
+        ["flow_packets_per_s", 0, 20, "infinite set to null"],
         ["bwd_psh_flags", 0, 0, "constant, hidden"],
     ]
     assert column_issues("simulated-real-traffic-01").empty
