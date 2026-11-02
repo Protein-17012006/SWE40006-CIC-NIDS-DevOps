@@ -83,6 +83,51 @@ def seeded_db_url(migrated_db_url):
 
 
 @pytest.fixture
+def use_seeded_db(seeded_db_url, settings_env, monkeypatch, clear_caches):
+    """Points the app at the seeded database, with fresh settings and caches."""
+    monkeypatch.setenv("DATABASE_URL", seeded_db_url)
+    clear_caches()
+    return seeded_db_url
+
+
+@pytest.fixture
+def filters_for(use_seeded_db):
+    """Gives the test a function that builds the Filters a viewer's selection would produce."""
+    from app.components.filters import CATEGORIES_KEY, DATASET_KEY, DATES_KEY, current_filters
+    from app.data.queries import loaded_datasets
+    from tests.fixtures.seed import LABELLED
+
+    def make(dataset=LABELLED, dates=None, categories=None):
+        state = {DATASET_KEY: dataset}
+        if dates is not None:
+            state[DATES_KEY] = dates
+        if categories is not None:
+            state[CATEGORIES_KEY] = categories
+        return current_filters(loaded_datasets(), state)
+
+    return make
+
+
+@pytest.fixture
+def run_app(use_seeded_db, clear_caches):
+    """Gives the test a function that runs app/<script> on the seeded database under AppTest."""
+    from pathlib import Path
+
+    from streamlit.testing.v1 import AppTest
+
+    app_dir = Path(__file__).resolve().parents[1] / "app"
+
+    def run(script, state=None):
+        clear_caches()
+        at = AppTest.from_file(str(app_dir / script), default_timeout=30)
+        for key, value in (state or {}).items():
+            at.session_state[key] = value
+        return at.run()
+
+    return run
+
+
+@pytest.fixture
 def engine(migrated_db_url):
     """An engine on a freshly migrated test database."""
     engine = sa.create_engine(migrated_db_url)

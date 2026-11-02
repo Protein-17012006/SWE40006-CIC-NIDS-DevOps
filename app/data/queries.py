@@ -6,6 +6,9 @@ import streamlit as st
 
 from app.data.db import get_engine
 
+# The CSE-CIC-IDS2018 baseline leads the Dataset filter
+BASELINE = "cse-cic-ids2018"
+
 
 def _read(query: str, **params: object) -> pd.DataFrame:
     engine = get_engine()
@@ -18,3 +21,14 @@ def _read(query: str, **params: object) -> pd.DataFrame:
 @st.cache_data(ttl=300)
 def last_ingestion_run() -> pd.DataFrame:
     return _read("SELECT run_id, started_at FROM ingestion_runs ORDER BY run_id DESC LIMIT 1")
+
+
+@st.cache_data(ttl=300)
+def loaded_datasets() -> pd.DataFrame:
+    """Datasets with loaded rows for the Dataset filter, the baseline first, then the largest."""
+    return _read(
+        "SELECT dataset_id, display_name, has_label, fields, extra_fields, row_count, "
+        "first_ts, last_ts, loaded_at FROM datasets WHERE status = 'loaded' "
+        "ORDER BY dataset_id = :baseline DESC, row_count DESC, dataset_id",
+        baseline=BASELINE,
+    )
