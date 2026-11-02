@@ -56,4 +56,4 @@ streamlit run app/main.py
 
 ## Status
 
-Milestone 1 (walking skeleton) is live: the app shell runs in all four environments, deployed by the pipeline with a production approval gate. Next: data ingestion (milestone 2), then the dashboard pages.
+Milestone 3 (dashboard pages) is live: all six pages read real data in the Material theme.
