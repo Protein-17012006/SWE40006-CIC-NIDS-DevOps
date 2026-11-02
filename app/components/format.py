@@ -80,3 +80,16 @@ def with_unit(value: float, unit: str) -> str:
 
 def basename(key: str) -> str:
     return key.rsplit("/", 1)[-1]
+
+
+# Badge text for run and dataset statuses (report section 4.4)
+_BADGES = {
+    "loaded": "✅ Loaded",
+    "quarantined": "⚠️ Quarantined",
+    "failed": "❌ Failed",
+    "running": "⏳ Running",
+}
+
+
+def status_badge(status: str) -> str:
+    return _BADGES.get(status, status)

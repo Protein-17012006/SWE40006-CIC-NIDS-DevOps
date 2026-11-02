@@ -52,3 +52,13 @@ CATEGORY_COLORS: dict[str, str] = {
     "Botnet": "#E87BA4",
     "Infiltration": "#008300",
 }
+
+# The cleaning steps ingestion counts (pipeline.clean.STEPS), in the order the Data quality page
+# lists them; repeated here so the dashboard does not import pandera at start-up
+QUALITY_STEPS: tuple[str, ...] = (
+    "duplicates_removed",
+    "infinite_set_to_null",
+    "missing_kept_as_null",
+    "repeated_headers_dropped",
+    "labels_trimmed",
+)

@@ -10,6 +10,8 @@ from app.data.queries import (
     attack_mix,
     busiest_hours,
     capture_days,
+    cleaning_steps,
+    column_issues,
     dataset_files,
     datasets_table,
     flows_by_category,
@@ -218,3 +220,23 @@ def test_pipeline_queries(use_seeded_db):
     assert quarantined_files()[["run_id", "file_key"]].values.tolist() == [
         [5, "raw/broken/missing-dst-port.csv"]
     ]
+
+
+@pytest.mark.db
+def test_cleaning_steps(use_seeded_db):
+    assert cleaning_steps("cse-cic-ids2018").values.tolist() == [
+        ["duplicates_removed", 100],
+        ["infinite_set_to_null", 20],
+        ["missing_kept_as_null", 7],
+        ["repeated_headers_dropped", 1],
+        ["labels_trimmed", 0],
+    ]
+
+
+@pytest.mark.db
+def test_column_issues(use_seeded_db):
+    assert column_issues("cse-cic-ids2018").values.tolist() == [
+        ["flow_bytes_per_s", 7, 20, "infinite set to null"],
+        ["bwd_psh_flags", 0, 0, "constant, hidden"],
+    ]
+    assert column_issues("simulated-real-traffic-01").empty
