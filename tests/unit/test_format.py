@@ -103,3 +103,14 @@ def test_with_unit_never_prints_scientific_notation(value, unit, text):
 @pytest.mark.parametrize("n, text", [(999.6, "1 k"), (999_600, "1 M"), (999_999_999, "1 B")])
 def test_compact_rounds_up_into_the_next_suffix(n, text):
     assert compact(n) == text
+
+
+def test_status_badge():
+    from app.components.format import status_badge
+
+    assert [status_badge(s) for s in ("loaded", "quarantined", "failed", "running")] == [
+        "✅ Loaded",
+        "⚠️ Quarantined",
+        "❌ Failed",
+        "⏳ Running",
+    ]

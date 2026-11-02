@@ -14,7 +14,7 @@ import sqlalchemy as sa
 import streamlit as st
 
 from app.data.db import get_engine
-from app.data.fields import ATTACK_CATEGORIES
+from app.data.fields import ATTACK_CATEGORIES, QUALITY_STEPS
 from app.data.ports import protocol_name
 
 if TYPE_CHECKING:  # filters imports this module
@@ -306,4 +306,42 @@ def quarantined_files() -> pd.DataFrame:
         "ORDER BY file_key, run_id DESC) "
         "SELECT run_id, dataset_id, file_key, message, report_key, draft_contract_key "
         "FROM latest WHERE status = 'quarantined' ORDER BY run_id DESC"
+    )
+
+
+# Data quality (UI-06): the latest loaded run of each file in one dataset
+
+
+@st.cache_data(ttl=300)
+def cleaning_steps(dataset_id: str) -> pd.DataFrame:
+    return _read(
+        "WITH latest AS (SELECT DISTINCT ON (file_key) run_id FROM ingestion_runs "
+        "WHERE dataset_id = :dataset_id AND status = 'loaded' ORDER BY file_key, run_id DESC) "
+        "SELECT step, SUM(rows_affected)::bigint AS rows_affected "
+        "FROM quality_steps WHERE run_id IN (SELECT run_id FROM latest) GROUP BY step "
+        "ORDER BY array_position(CAST(:steps AS text[]), step)",
+        dataset_id=dataset_id,
+        steps=list(QUALITY_STEPS),
+    )
+
+
+@st.cache_data(ttl=300)
+def column_issues(dataset_id: str) -> pd.DataFrame:
+    """Columns with nulls, infinities or one value, summed over the dataset's files.
+
+    A column counts as constant only when every file reports it so.
+    """
+    return _read(
+        "WITH latest AS (SELECT DISTINCT ON (file_key) run_id FROM ingestion_runs "
+        "WHERE dataset_id = :dataset_id AND status = 'loaded' ORDER BY file_key, run_id DESC) "
+        "SELECT column_name, nulls, infinite, action FROM ("
+        "SELECT column_name, SUM(nulls)::bigint AS nulls, SUM(infinite)::bigint AS infinite, "
+        "CASE WHEN BOOL_AND(action = 'constant, hidden') "
+        "AND COUNT(*) = (SELECT COUNT(*) FROM latest) THEN 'constant, hidden' "
+        "WHEN SUM(infinite) > 0 THEN 'infinite set to null' "
+        "WHEN SUM(nulls) > 0 THEN 'kept as null' END AS action "
+        "FROM quality_columns WHERE run_id IN (SELECT run_id FROM latest) "
+        "GROUP BY column_name) issues "
+        "WHERE action IS NOT NULL ORDER BY nulls + infinite DESC, column_name",
+        dataset_id=dataset_id,
     )

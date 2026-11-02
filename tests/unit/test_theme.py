@@ -25,3 +25,11 @@ def test_category_colours():
         "Botnet": "#E87BA4",
         "Infiltration": "#008300",
     }
+
+
+def test_quality_steps_match_ingestion():
+    """The dashboard orders cleaning steps itself, to avoid importing pandera at start-up."""
+    from app.data.fields import QUALITY_STEPS
+    from pipeline.clean import STEPS
+
+    assert QUALITY_STEPS == STEPS

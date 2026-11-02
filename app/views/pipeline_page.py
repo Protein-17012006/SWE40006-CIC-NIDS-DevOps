@@ -4,7 +4,7 @@ contract, and which files were quarantined. It covers the whole environment, so 
 import pandas as pd
 import streamlit as st
 
-from app.components.format import basename, compact, mmss, plural, stamp_label
+from app.components.format import basename, compact, mmss, plural, stamp_label, status_badge
 from app.components.layout import chart_card, kpi_tile, page_header
 from app.config import get_settings
 from app.data import queries, storage
@@ -12,12 +12,6 @@ from app.data.db import get_engine, ping
 from app.data.queries import last_ingestion_run
 from app.telemetry import log_event
 
-STATUS = {
-    "loaded": "✅ Loaded",
-    "quarantined": "⚠️ Quarantined",
-    "failed": "❌ Failed",
-    "running": "⏳ Running",
-}
 LOADS_ON_DEPLOY = (
     "Once a contract for this file is merged and deployed, the deployment loads the file."
 )
@@ -45,7 +39,7 @@ def datasets_view(df: pd.DataFrame) -> None:
             "Contract": contracts,
             "Rows": df["row_count"].map(compact),
             "Last run": df["last_run_at"].map(utc),
-            "Status": df["status"].map(STATUS),
+            "Status": df["status"].map(status_badge),
         }
     )
     st.dataframe(table, hide_index=True)
@@ -64,7 +58,7 @@ def runs_view(df: pd.DataFrame) -> None:
             "Duration": durations,
             "Loaded": df["rows_loaded"].map(lambda n: f"{n:,}"),
             "Rejected": df["rows_rejected"].map(lambda n: f"{n:,}"),
-            "Status": df["status"].map(STATUS),
+            "Status": df["status"].map(status_badge),
         }
     )
     st.dataframe(table, hide_index=True)
