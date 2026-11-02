@@ -71,3 +71,15 @@ def test_ports_and_protocols():
         "other",
     ]
     assert [protocol_name(n) for n in (6, 17, 1, 47)] == ["TCP", "UDP", "ICMP", "Other"]
+
+
+def test_plural():
+    from app.components.format import plural
+
+    assert [plural(1, "file"), plural(2, "file"), plural(0, "file")] == [
+        "1 file",
+        "2 files",
+        "0 files",
+    ]
+    assert plural(6, "category", "categories") == "6 categories"
+    assert plural(1, "category", "categories") == "1 category"

@@ -19,6 +19,11 @@ def compact(n: float) -> str:
     return f"{n:.3g}"
 
 
+def plural(n: int, one: str, many: str | None = None) -> str:
+    """A count with its noun: 1 file, 2 files, 6 categories."""
+    return f"{n} {one if n == 1 else many or one + 's'}"
+
+
 def percent(share: float) -> str:
     return f"{share * 100:.1f} %"
 

@@ -50,6 +50,16 @@ def coming_soon(requirement_ids: str) -> None:
     st.info(f"This page arrives in a later release ({requirement_ids}).")
 
 
+def load_or_warn(what: str, load: Callable[[], pd.DataFrame]) -> pd.DataFrame | None:
+    """Run one of the page's queries; on failure log it, show CARD_FAILED and return None."""
+    try:
+        return load()
+    except Exception as exc:
+        log_event("query_failed", level="ERROR", card=what, message=first_line(exc))
+        st.warning(CARD_FAILED)
+        return None
+
+
 def _card_title(title: str) -> None:
     st.markdown(f"**{title}**")
 
@@ -83,11 +93,8 @@ def chart_card(
         )
         with head:
             _card_title(title)
-        try:
-            frame = load()
-        except Exception as exc:
-            log_event("query_failed", level="ERROR", card=title, message=first_line(exc))
-            st.warning(CARD_FAILED)
+        frame = load_or_warn(title, load)
+        if frame is None:
             return
         if frame.empty:
             st.info(NO_FLOWS)
