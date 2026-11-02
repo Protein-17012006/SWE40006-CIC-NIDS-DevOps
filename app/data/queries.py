@@ -271,3 +271,39 @@ def main_ports(f: Filters) -> pd.DataFrame:
         time="day",
         order=list(ATTACK_CATEGORIES),
     )
+
+
+# Pipeline (UI-07): the whole environment, so no filters
+
+
+@st.cache_data(ttl=300)
+def datasets_table() -> pd.DataFrame:
+    """Every dataset with its file count and last run, the baseline first."""
+    return _read(
+        "SELECT d.dataset_id, d.display_name, COUNT(DISTINCT r.file_key) AS files, "
+        "d.contract_name, d.contract_version, d.row_count, MAX(r.started_at) AS last_run_at, "
+        "d.status FROM datasets d LEFT JOIN ingestion_runs r USING (dataset_id) "
+        "GROUP BY d.dataset_id ORDER BY d.dataset_id = :baseline DESC, d.display_name",
+        baseline=BASELINE,
+    )
+
+
+@st.cache_data(ttl=300)
+def recent_runs(limit: int = 20) -> pd.DataFrame:
+    return _read(
+        "SELECT run_id, file_key, started_at, ended_at, rows_loaded, rows_rejected, status "
+        "FROM ingestion_runs ORDER BY run_id DESC LIMIT :limit",
+        limit=limit,
+    )
+
+
+@st.cache_data(ttl=300)
+def quarantined_files() -> pd.DataFrame:
+    """Files whose latest run was quarantined, newest first."""
+    return _read(
+        "WITH latest AS (SELECT DISTINCT ON (file_key) run_id, dataset_id, file_key, status, "
+        "message, report_key, draft_contract_key FROM ingestion_runs "
+        "ORDER BY file_key, run_id DESC) "
+        "SELECT run_id, dataset_id, file_key, message, report_key, draft_contract_key "
+        "FROM latest WHERE status = 'quarantined' ORDER BY run_id DESC"
+    )
