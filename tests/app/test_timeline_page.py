@@ -1,7 +1,7 @@
 from datetime import date
 
 import pytest
-from page_helpers import captions, markdown
+from page_helpers import captions, markdown, x_axis
 
 PAGE = "views/timeline.py"
 
@@ -46,3 +46,12 @@ def test_stale_day_is_replaced_on_screen(run_app):  # a day picked on another da
     assert not at.exception
     assert picker.value == date(2018, 3, 2) and picker.proto.set_value
     assert "**Flows per hour on 2 Mar 2018**" in markdown(at)
+
+
+@pytest.mark.db
+@pytest.mark.parametrize("state", [{}, {"filter_dataset": "simulated-real-traffic-01"}])
+def test_hourly_chart_labels_every_third_hour_level(run_app, state):
+    at = run_app(PAGE, state)
+    hours = x_axis(at.get("plotly_chart")[-1])  # the hourly chart comes last
+    assert hours.get("tickvals") == [f"{h:02d}:00" for h in range(0, 24, 3)]
+    assert hours.get("tickangle") == 0

@@ -43,7 +43,7 @@ def labels_table(df: pd.DataFrame) -> None:
 
 def hourly_bars(df: pd.DataFrame) -> None:
     hours = df.assign(hour=df["hour"].map(hour_label))
-    charts.show(charts.bars(hours, "flows", "hour", horizontal=False))
+    charts.show(charts.hour_axis(charts.bars(hours, "flows", "hour", horizontal=False)))
 
 
 def category_card(f: Filters, span: str) -> None:

@@ -1,5 +1,5 @@
 import pytest
-from page_helpers import captions, markdown, tiles
+from page_helpers import captions, markdown, tiles, x_axis
 
 from app.components.layout import NO_FLOWS
 
@@ -45,6 +45,8 @@ def test_overview_unlabelled(run_app):
     assert "pkt_entropy, geo_country" in captions(at)
     assert captions(at).count("Hidden: this chart needs the label field.") == 2
     assert {"**Flows per hour**", "**Top destination ports**"} <= markdown(at)
+    hours = x_axis(at.get("plotly_chart")[0])  # Flows per hour
+    assert hours.get("tickvals") == [f"{h:02d}:00" for h in range(0, 24, 3)]
 
 
 @pytest.mark.db

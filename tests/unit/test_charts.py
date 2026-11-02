@@ -5,6 +5,7 @@ from app.components.charts import (
     bars,
     box_from_stats,
     histogram_from_bins,
+    hour_axis,
     share_bar,
     stacked,
 )
@@ -136,3 +137,10 @@ def test_histogram_drops_to_zero_across_empty_bins():
     trace = histogram_from_bins(bins, log=True).data[0]
     assert list(trace.x) == [1.0, 1.0, 10.0, 100.0, 100.0, 1000.0, 1000.0]
     assert list(trace.y) == [0, 3, 0, 0, 2, 2, 0]
+
+
+def test_hour_axis_labels_every_third_hour_level():  # 24 upright labels ran under the legend
+    df = pd.DataFrame({"hour": [f"{h:02d}:00" for h in range(24)], "flows": range(24)})
+    fig = hour_axis(bars(df, "flows", "hour", horizontal=False))
+    assert fig.layout.xaxis.tickvals == tuple(f"{h:02d}:00" for h in range(0, 24, 3))
+    assert fig.layout.xaxis.tickangle == 0
