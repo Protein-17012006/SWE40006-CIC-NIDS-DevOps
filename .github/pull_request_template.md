@@ -6,7 +6,7 @@
 
 Tick what applies; leave a note for anything that does not.
 
-- [ ] It matches its Figma frame in layout, titles and captions at 1366 × 768
+- [ ] It follows its page in `docs/design/2026-11-02-dashboard-pages-design.md` section 5 and is usable at 1366 × 768
 - [ ] Every chart goes through the guard and has a Hidden state
 - [ ] AppTest passes on the labelled and the unlabelled fixture
 - [ ] No SQL outside `app/data/queries.py`, and no source column names outside `contracts/`
