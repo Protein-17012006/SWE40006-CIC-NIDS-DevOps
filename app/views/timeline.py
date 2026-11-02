@@ -88,8 +88,10 @@ if days_frame.empty:
 days = days_frame["day"].tolist()
 busiest_day = days_frame.loc[days_frame["attack_flows"].idxmax(), "day"]
 default = busiest_day if f.has_label and days_frame["attack_flows"].max() > 0 else days[0]
-if st.session_state.get(DAY_KEY) not in days:  # a day the filters no longer cover
-    st.session_state.pop(DAY_KEY, None)
+# A day the filters no longer cover is replaced by assignment, so the browser shows it too
+# (after a deletion it would go on showing the old day)
+if DAY_KEY in st.session_state and st.session_state[DAY_KEY] not in days:
+    st.session_state[DAY_KEY] = default
 selected = st.session_state.get(DAY_KEY, default)
 
 chart_card(

@@ -35,3 +35,14 @@ def test_timeline_unlabelled(run_app):
     assert at.selectbox(key="timeline_day").options == ["2 Mar 2018"]
     assert "Peak: 500 flows between 10:00 and 11:00" in captions(at)
     assert "Main category" not in at.dataframe[0].value.columns
+
+
+@pytest.mark.db
+def test_stale_day_is_replaced_on_screen(run_app):  # a day picked on another dataset
+    at = run_app(
+        PAGE, {"filter_dataset": "simulated-real-traffic-01", "timeline_day": date(2018, 2, 14)}
+    )
+    picker = at.selectbox(key="timeline_day")
+    assert not at.exception
+    assert picker.value == date(2018, 3, 2) and picker.proto.set_value
+    assert "**Flows per hour on 2 Mar 2018**" in markdown(at)
