@@ -152,6 +152,10 @@ for column, (label, value, caption) in zip(st.columns(4), tiles, strict=True):
     with column:
         kpi_tile(label, value, caption)
 
+if not db.ok:  # each card would wait out the connection timeout in turn
+    st.info("Datasets, runs and quarantined files appear here once the database can be reached.")
+    st.stop()
+
 chart_card(
     "Datasets",
     "One row per source; a contract maps each source to the canonical fields",

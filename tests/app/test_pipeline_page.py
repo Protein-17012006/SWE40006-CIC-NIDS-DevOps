@@ -88,3 +88,16 @@ def test_quarantine_without_a_draft_offers_none(run_app, seeded_db_url, bucket, 
     assert len(at.warning) == 2
     assert [c.value for c in at.caption].count("The draft contract could not be read.") == 1
 
+
+def test_pipeline_without_database_skips_the_cards(settings_env, monkeypatch, clear_caches):
+    """Each card would wait out the connection timeout in turn; one note replaces them."""
+    from app.components.layout import CARD_FAILED
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://u:p@127.0.0.1:1/db")
+    clear_caches()
+    at = AppTest.from_file(PIPELINE_PAGE, default_timeout=30).run()
+    assert not at.exception
+    assert CARD_FAILED not in [w.value for w in at.warning]
+    assert at.info[0].value == (
+        "Datasets, runs and quarantined files appear here once the database can be reached."
+    )
