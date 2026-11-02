@@ -103,23 +103,44 @@ def _datasets_or_none() -> pd.DataFrame | None:
         return None
 
 
+# Widget values are corrected by assigning to session state, never by deleting the key: a keyed
+# widget keeps its identity across reruns, so after a deletion the browser goes on showing, and
+# sending back, the old value. An assignment is passed on to the browser.
+
+
 def _reset_selection() -> None:
     """A new dataset starts from its own full span and every category."""
-    st.session_state.pop(DATES_KEY, None)
-    st.session_state.pop(CATEGORIES_KEY, None)
+    datasets = _datasets_or_none()
+    if datasets is None or datasets.empty:
+        return
+    first, last = _span(_chosen_row(datasets, st.session_state))
+    if first is not None and last is not None:
+        st.session_state[DATES_KEY] = (first, last)
+    else:  # no timestamps: the date input is not drawn
+        st.session_state.pop(DATES_KEY, None)
+    st.session_state[CATEGORIES_KEY] = list(ATTACK_ONLY)
 
 
-def _drop_stale_state(datasets: pd.DataFrame) -> None:
-    """Widgets raise on a stored value outside their options; drop such values first."""
+def _correct_stale_state(datasets: pd.DataFrame) -> None:
+    """Widgets raise on a stored value outside their options; replace such values with the
+    selection current_filters makes of them (a range is clamped to the dataset's span)."""
     state = st.session_state
-    if state.get(DATASET_KEY) not in datasets["dataset_id"].tolist():
-        state.pop(DATASET_KEY, None)
+    ids = datasets["dataset_id"].tolist()
+    if DATASET_KEY in state and state[DATASET_KEY] not in ids:
+        state[DATASET_KEY] = ids[0]
     first, last = _span(_chosen_row(datasets, state))
     picked = _picked_dates(state.get(DATES_KEY))
-    if picked is not None and not (first and last and first <= picked[0] <= picked[1] <= last):
-        state.pop(DATES_KEY, None)
+    inside = first is not None and last is not None and picked is not None
+    if picked is not None and not (inside and first <= picked[0] <= picked[1] <= last):
+        f = current_filters(datasets, state)
+        if f.date_from is None:
+            state.pop(DATES_KEY, None)
+        else:
+            state[DATES_KEY] = (f.date_from, f.date_to)
     if CATEGORIES_KEY in state:
-        state[CATEGORIES_KEY] = [c for c in state[CATEGORIES_KEY] or () if c in ATTACK_ONLY]
+        chosen = state[CATEGORIES_KEY] or ()
+        if any(c not in ATTACK_ONLY for c in chosen):
+            state[CATEGORIES_KEY] = [c for c in chosen if c in ATTACK_ONLY]
 
 
 def sidebar_filters() -> None:
@@ -127,7 +148,7 @@ def sidebar_filters() -> None:
     datasets = _datasets_or_none()
     if datasets is None or datasets.empty:
         return
-    _drop_stale_state(datasets)
+    _correct_stale_state(datasets)
     names = dict(zip(datasets["dataset_id"], datasets["display_name"], strict=True))
     with st.sidebar:
         st.caption("FILTERS")
