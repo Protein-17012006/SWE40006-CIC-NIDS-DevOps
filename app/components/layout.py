@@ -80,9 +80,11 @@ def chart_card(
     filters: Filters | None = None,
     needs: Sequence[str] = (),
     csv: bool = True,
+    empty: str = NO_FLOWS,
 ) -> None:
     """A bordered card: hidden without a needed field, a warning when its query fails,
-    a note when nothing matches, else the caption, the visual and its data as CSV (UI-11)."""
+    the empty note when nothing matches, else the caption, the visual and its data as CSV
+    (UI-11)."""
     lacking = missing(filters, needs) if filters is not None else []
     if lacking:
         hidden_card(title, lacking[0])
@@ -97,7 +99,7 @@ def chart_card(
         if frame is None:
             return
         if frame.empty:
-            st.info(NO_FLOWS)
+            st.info(empty)
             return
         st.caption(caption(frame) if callable(caption) else caption)
         render(frame)

@@ -11,6 +11,7 @@ from app.data.queries import (
     busiest_hours,
     capture_days,
     dataset_files,
+    datasets_table,
     flows_by_category,
     flows_per_hour,
     flows_per_hour_on,
@@ -19,6 +20,8 @@ from app.data.queries import (
     loaded_datasets,
     main_ports,
     protocol_mix,
+    quarantined_files,
+    recent_runs,
     top_attack_labels,
     top_ports,
 )
@@ -200,3 +203,18 @@ def test_main_ports(filters_for):
     assert ports.loc["Brute force", "main_port"] == 21
     assert pd.isna(ports.loc["Web attack", "next_port"])
     assert len(main_ports(filters_for(categories=["DDoS"]))) == 1
+
+
+@pytest.mark.db
+def test_pipeline_queries(use_seeded_db):
+    table = datasets_table()
+    assert table[["dataset_id", "files", "row_count", "status"]].values.tolist() == [
+        ["cse-cic-ids2018", 2, 7155, "loaded"],
+        ["broken", 1, 0, "quarantined"],
+        ["simulated-real-traffic-01", 1, 1000, "loaded"],
+    ]
+    assert recent_runs()["run_id"].tolist() == [5, 4, 3, 2, 1]
+    assert recent_runs(limit=2)["run_id"].tolist() == [5, 4]
+    assert quarantined_files()[["run_id", "file_key"]].values.tolist() == [
+        [5, "raw/broken/missing-dst-port.csv"]
+    ]
