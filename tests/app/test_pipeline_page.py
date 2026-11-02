@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from streamlit.testing.v1 import AppTest
 
-PIPELINE_PAGE = str(Path(__file__).resolve().parents[2] / "app" / "views" / "pipeline.py")
+PIPELINE_PAGE = str(Path(__file__).resolve().parents[2] / "app" / "views" / "pipeline_page.py")
 
 
 def test_tiles_with_unreachable_database(settings_env, monkeypatch, clear_caches):
@@ -37,7 +37,7 @@ LOADS_ON_DEPLOY = (
 
 @pytest.mark.db
 def test_pipeline_tables_and_quarantine_without_bucket(run_app):
-    at = run_app("views/pipeline.py")
+    at = run_app("views/pipeline_page.py")
     assert not at.exception
     datasets, runs = (d.value for d in at.dataframe)
     assert datasets["Status"].tolist() == ["✅ Loaded", "⚠️ Quarantined", "✅ Loaded"]
@@ -55,7 +55,7 @@ def test_pipeline_tables_and_quarantine_without_bucket(run_app):
 def test_pipeline_quarantine_with_bucket(run_app, bucket, monkeypatch):
     monkeypatch.setenv("S3_BUCKET", "cicnids-test")
     bucket.put_text(DRAFT, "name: broken\n", "application/yaml")
-    at = run_app("views/pipeline.py")
+    at = run_app("views/pipeline_page.py")
     assert not at.exception
     assert [b.label for b in at.button].count("View report") == 1
     assert at.download_button[-1].label == "Download draft contract"
@@ -64,7 +64,7 @@ def test_pipeline_quarantine_with_bucket(run_app, bucket, monkeypatch):
 @pytest.mark.db
 def test_pipeline_quarantine_draft_missing(run_app, bucket, monkeypatch):
     monkeypatch.setenv("S3_BUCKET", "cicnids-test")
-    at = run_app("views/pipeline.py")
+    at = run_app("views/pipeline_page.py")
     assert "The draft contract could not be read." in [c.value for c in at.caption]
 
 
@@ -84,6 +84,7 @@ def test_quarantine_without_a_draft_offers_none(run_app, seeded_db_url, bucket, 
         )
     engine.dispose()
     monkeypatch.setenv("S3_BUCKET", "cicnids-test")
-    at = run_app("views/pipeline.py")
+    at = run_app("views/pipeline_page.py")
     assert len(at.warning) == 2
     assert [c.value for c in at.caption].count("The draft contract could not be read.") == 1
+
