@@ -70,6 +70,19 @@ def migrated_db_url(empty_db_url):
 
 
 @pytest.fixture
+def seeded_db_url(migrated_db_url):
+    """A migrated test database holding the seeded fixture (tests/fixtures/seed.py)."""
+    from tests.fixtures.seed import seed
+
+    engine = sa.create_engine(migrated_db_url)
+    try:
+        seed(engine)
+    finally:
+        engine.dispose()
+    return migrated_db_url
+
+
+@pytest.fixture
 def engine(migrated_db_url):
     """An engine on a freshly migrated test database."""
     engine = sa.create_engine(migrated_db_url)
