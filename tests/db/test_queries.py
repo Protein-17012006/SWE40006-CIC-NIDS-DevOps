@@ -1,5 +1,6 @@
 from datetime import date
 
+import pandas as pd
 import pytest
 import sqlalchemy as sa
 
@@ -16,6 +17,8 @@ from app.data.queries import (
     kpi_totals,
     last_ingestion_run,
     loaded_datasets,
+    main_ports,
+    protocol_mix,
     top_attack_labels,
     top_ports,
 )
@@ -170,3 +173,30 @@ def test_busiest_hours(filters_for):
         [date(2018, 2, 14), 11, 800, "Benign"],
     ]
     assert busiest_hours(filters_for(UNLABELLED))["main_category"].isna().all()
+
+
+@pytest.mark.db
+def test_protocol_mix(filters_for):
+    mix = protocol_mix(filters_for()).set_index(["attack_category", "protocol"])["share"]
+    assert mix["Benign"].round(3).to_dict() == {"TCP": 0.625, "UDP": 0.347, "ICMP": 0.028}
+    assert mix["DDoS"].round(3).to_dict() == {"TCP": 0.995, "UDP": 0.005}
+    unlabelled = protocol_mix(filters_for(UNLABELLED))
+    assert unlabelled["attack_category"].isna().all()
+    assert unlabelled["protocol"].tolist() == ["TCP", "UDP"]
+
+
+@pytest.mark.db
+def test_main_ports(filters_for):
+    ports = main_ports(filters_for()).set_index("attack_category")
+    assert ports.index.tolist() == [
+        "DoS",
+        "DDoS",
+        "Brute force",
+        "Web attack",
+        "Botnet",
+        "Infiltration",
+    ]
+    assert ports.loc["Infiltration"].tolist() == [445, pytest.approx(0.6), 3389, pytest.approx(0.3)]
+    assert ports.loc["Brute force", "main_port"] == 21
+    assert pd.isna(ports.loc["Web attack", "next_port"])
+    assert len(main_ports(filters_for(categories=["DDoS"]))) == 1

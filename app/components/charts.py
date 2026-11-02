@@ -14,6 +14,7 @@ import streamlit as st
 from app.components.format import compact
 from app.components.format import percent as share_label  # stacked() has a percent flag
 from app.data.fields import ATTACK_CATEGORIES, CATEGORY_COLORS
+from app.data.ports import port_label
 
 PRIMARY = "#6750A4"
 CHART_HEIGHT = 300
@@ -75,6 +76,11 @@ def bars(
     if horizontal:
         fig.update_yaxes(autorange="reversed")  # the first row on top
     return _finish(fig)
+
+
+def port_bars(df: pd.DataFrame) -> go.Figure:
+    """Destination ports as labelled bars ("80 · HTTP") in the primary colour."""
+    return bars(df.assign(port=df["dst_port"].map(port_label)), "flows", "port")
 
 
 def stacked(

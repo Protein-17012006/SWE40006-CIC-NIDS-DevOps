@@ -14,6 +14,8 @@ import sqlalchemy as sa
 import streamlit as st
 
 from app.data.db import get_engine
+from app.data.fields import ATTACK_CATEGORIES
+from app.data.ports import protocol_name
 
 if TYPE_CHECKING:  # filters imports this module
     from app.components.filters import Filters
@@ -215,4 +217,57 @@ def busiest_hours(f: Filters, limit: int = 5) -> pd.DataFrame:
         "WHERE place = 1 ORDER BY flows DESC, day, hour LIMIT :limit",
         f,
         limit=limit,
+    )
+
+
+# Targets (UI-04)
+
+PROTOCOL_ORDER = ["TCP", "UDP", "ICMP", "Other"]
+
+
+@st.cache_data(ttl=300)
+def protocol_mix(f: Filters) -> pd.DataFrame:
+    """Each category's flows per protocol, with the share within the category."""
+    frame = _scoped(
+        "SELECT attack_category, protocol, SUM(flows)::bigint AS flows FROM agg_ports "
+        "WHERE {where} GROUP BY 1, 2",
+        f,
+        time="day",
+    )
+    frame["protocol"] = frame["protocol"].map(protocol_name)
+    frame = frame.groupby(["attack_category", "protocol"], dropna=False, as_index=False)[
+        "flows"
+    ].sum()
+    totals = frame.groupby("attack_category", dropna=False)["flows"].transform("sum")
+    frame["share"] = frame["flows"] / totals
+    frame["_category"] = frame["attack_category"].map(
+        lambda c: ATTACK_CATEGORIES.index(c) if c in ATTACK_CATEGORIES else len(ATTACK_CATEGORIES)
+    )
+    frame["_protocol"] = frame["protocol"].map(PROTOCOL_ORDER.index)
+    frame = frame.sort_values(["_category", "_protocol"]).drop(columns=["_category", "_protocol"])
+    return frame.reset_index(drop=True)
+
+
+@st.cache_data(ttl=300)
+def main_ports(f: Filters) -> pd.DataFrame:
+    """Each attack category's busiest port and the next one, with their shares of its flows.
+
+    The capped "other" bucket (port -1) counts in the shares but never ranks.
+    """
+    return _scoped(
+        "WITH per_port AS (SELECT attack_category, dst_port, SUM(flows) AS flows FROM agg_ports "
+        "WHERE {where} AND attack_category <> 'Benign' GROUP BY 1, 2), "
+        "shares AS (SELECT attack_category, dst_port, "
+        "flows::float8 / SUM(flows) OVER (PARTITION BY attack_category) AS share, "
+        "ROW_NUMBER() OVER (PARTITION BY attack_category "
+        "ORDER BY dst_port = -1, flows DESC, dst_port) AS place FROM per_port) "
+        "SELECT m.attack_category, m.dst_port AS main_port, m.share AS main_share, "
+        "n.dst_port AS next_port, n.share AS next_share FROM shares m "
+        "LEFT JOIN shares n ON n.attack_category = m.attack_category AND n.place = 2 "
+        "AND n.dst_port <> -1 "
+        "WHERE m.place = 1 AND m.dst_port <> -1 "
+        "ORDER BY array_position(CAST(:order AS text[]), m.attack_category)",
+        f,
+        time="day",
+        order=list(ATTACK_CATEGORIES),
     )
