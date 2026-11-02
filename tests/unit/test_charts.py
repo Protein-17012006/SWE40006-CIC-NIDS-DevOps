@@ -44,7 +44,20 @@ def test_stacked_percent_shares_add_up_within_each_bar():
         df, "category", "flows", "protocol", percent=True, horizontal=True, colors=PROTOCOL_COLORS
     )
     assert [t.x[0] for t in fig.data] == [99.5, 0.5]
-    assert [t.marker.color for t in fig.data] == ["#6750A4", "#7D5260"]
+    assert [t.marker.color for t in fig.data] == [PROTOCOL_COLORS["TCP"], PROTOCOL_COLORS["UDP"]]
+    # Shares are printed on segments of 10 % or more, so colour is not the only cue
+    assert [t.text[0] for t in fig.data] == ["99.5 %", ""]
+
+
+def test_protocol_colours_differ_in_lightness():
+    """TCP, UDP and ICMP sit side by side; they must stay apart without hue (colour blindness)."""
+
+    def lightness(hex_colour: str) -> float:
+        r, g, b = (int(hex_colour[i : i + 2], 16) for i in (1, 3, 5))
+        return (max(r, g, b) + min(r, g, b)) / 510
+
+    shades = sorted(lightness(PROTOCOL_COLORS[p]) for p in ("TCP", "UDP", "ICMP"))
+    assert min(b - a for a, b in zip(shades, shades[1:], strict=False)) >= 0.15
 
 
 def test_share_bar_labels_segments_of_ten_percent_or_more():
@@ -104,6 +117,22 @@ def test_histogram_from_bins_one_trace_per_category():
     )
     fig = histogram_from_bins(bins, log=True)
     assert [t.name for t in fig.data] == ["Benign", "DDoS"]
-    # A step line over the bin edges: the last count repeats to close the last bin
-    assert list(fig.data[0].x) == [1.0, 10.0, 100.0] and list(fig.data[0].y) == [3, 2, 2]
+    # A step outline over the bin edges that starts and ends at 0
+    assert list(fig.data[0].x) == [1.0, 1.0, 10.0, 100.0, 100.0]
+    assert list(fig.data[0].y) == [0, 3, 2, 2, 0]
     assert fig.data[0].line.color == "#8F8D86" and fig.layout.xaxis.type == "log"
+
+
+def test_histogram_drops_to_zero_across_empty_bins():
+    """The query returns only bins with samples; a gap must not be drawn at the last height."""
+    bins = pd.DataFrame(
+        {
+            "attack_category": ["Benign", "Benign"],
+            "bin_start": [1.0, 100.0],
+            "bin_end": [10.0, 1000.0],
+            "samples": [3, 2],
+        }
+    )
+    trace = histogram_from_bins(bins, log=True).data[0]
+    assert list(trace.x) == [1.0, 1.0, 10.0, 100.0, 100.0, 1000.0, 1000.0]
+    assert list(trace.y) == [0, 3, 0, 0, 2, 2, 0]

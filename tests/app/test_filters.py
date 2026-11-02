@@ -91,14 +91,28 @@ def test_sidebar_draws_filters(run_app):
 
 @pytest.mark.db
 def test_changing_dataset_resets_dates_and_categories(run_app):  # Review Focus 2
+    """The reset must reach the browser: set_value tells it to show the new values. A popped
+    key changes only what the page reads, and the old values come back on the next rerun."""
     at = run_app("main.py")
     at.multiselect(key=CATEGORIES_KEY).set_value(["DDoS"]).run()
     at.selectbox(key=DATASET_KEY).select("simulated-real-traffic-01").run()
     assert not at.exception
-    assert at.date_input(key=DATES_KEY).value == (date(2018, 3, 2), date(2018, 3, 2))
-    assert at.multiselect(key=CATEGORIES_KEY).disabled
+    dates, categories = at.date_input(key=DATES_KEY), at.multiselect(key=CATEGORIES_KEY)
+    assert dates.value == (date(2018, 3, 2), date(2018, 3, 2)) and dates.proto.set_value
+    assert categories.disabled and categories.proto.set_value
     at.selectbox(key=DATASET_KEY).select("cse-cic-ids2018").run()
-    assert at.multiselect(key=CATEGORIES_KEY).value == list(ATTACK_ONLY)
+    categories = at.multiselect(key=CATEGORIES_KEY)
+    assert categories.value == list(ATTACK_ONLY) and categories.proto.set_value
+    assert at.date_input(key=DATES_KEY).value == (date(2018, 2, 14), date(2018, 2, 21))
+
+
+@pytest.mark.db
+def test_stale_dates_are_replaced_on_screen(run_app):
+    """A range outside the dataset (after a reload, say) is clamped, and the browser told."""
+    at = run_app("main.py", {DATES_KEY: (date(2018, 2, 20), date(2018, 3, 9))})
+    dates = at.date_input(key=DATES_KEY)
+    assert not at.exception
+    assert dates.value == (date(2018, 2, 20), date(2018, 2, 21)) and dates.proto.set_value
 
 
 def test_sidebar_without_database(settings_env, monkeypatch, clear_caches):

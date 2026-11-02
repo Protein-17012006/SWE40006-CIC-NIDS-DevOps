@@ -4,19 +4,22 @@ Streamlit's Plotly theme applies the Material fonts; these helpers only choose c
 and labels, so every page draws the same way.
 """
 
+import math
 from collections.abc import Mapping, Sequence
 
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from app.components.format import compact, percent
+from app.components.format import compact
+from app.components.format import percent as share_label  # stacked() has a percent flag
 from app.data.fields import ATTACK_CATEGORIES, CATEGORY_COLORS
 
 PRIMARY = "#6750A4"
 CHART_HEIGHT = 300
 SHARE_BAR_HEIGHT = 120  # one bar; at 300 px it would be a block
-PROTOCOL_COLORS = {"TCP": "#6750A4", "UDP": "#7D5260", "ICMP": "#625B71", "Other": "#CAC4D0"}
+# Apart in lightness as well as hue, so the three main protocols read without colour vision
+PROTOCOL_COLORS = {"TCP": "#6750A4", "UDP": "#7FC8C8", "ICMP": "#F2C4CE", "Other": "#CAC4D0"}
 ALL_TRAFFIC = "All traffic"
 
 
@@ -108,6 +111,10 @@ def stacked(
             if horizontal
             else {"x": positions, "y": values}
         )
+        if percent:  # shares on segments of 10 % or more, so colour is not the only cue
+            axes["text"] = [share_label(v / 100) if v >= 10 else "" for v in values]
+            axes["textposition"] = "inside"
+            axes["insidetextanchor"] = "middle"
         fig.add_trace(go.Bar(name=str(name), marker_color=palette.get(name, PRIMARY), **axes))
     fig.update_layout(barmode="stack")
     if horizontal:
@@ -131,7 +138,7 @@ def share_bar(df: pd.DataFrame, category: str, share: str) -> go.Figure:
                 y=[""],
                 orientation="h",
                 marker_color=CATEGORY_COLORS.get(name, PRIMARY),
-                text=[percent(value) if value >= 0.10 else ""],
+                text=[share_label(value) if value >= 0.10 else ""],
                 textposition="inside",
                 insidetextanchor="middle",
             )
@@ -179,18 +186,42 @@ def box_from_stats(stats: pd.DataFrame, *, log: bool) -> go.Figure:
     return _finish(fig)
 
 
+def _outline(starts: list[float], ends: list[float], counts: list[int]) -> tuple[list, list]:
+    """Points of a step outline ("hv") over sorted bins: up from 0 at the first bin, down to 0
+    across any gap (an empty bin is not in the data) and after the last bin."""
+    xs: list[float] = []
+    ys: list[float] = []
+    previous_end = None
+    for start, end, count in zip(starts, ends, counts, strict=True):
+        if previous_end is None:
+            xs.append(start)
+            ys.append(0)
+        elif not math.isclose(start, previous_end, rel_tol=1e-9):
+            xs += [previous_end, start]
+            ys += [0, 0]
+        xs.append(start)
+        ys.append(count)
+        previous_end = end
+    if previous_end is not None:
+        xs += [previous_end, previous_end]
+        ys += [ys[-1], 0]
+    return xs, ys
+
+
 def histogram_from_bins(bins: pd.DataFrame, *, log: bool) -> go.Figure:
-    """One step line per category over its bin edges, so overlapping categories stay readable."""
+    """One step outline per category over its bins, so overlapping categories stay readable."""
     fig = go.Figure()
     for value, group in bins.groupby("attack_category", sort=False, dropna=False):
         name = _name(value)
-        edges = [*group["bin_start"].tolist(), group["bin_end"].iloc[-1]]
-        counts = [*group["samples"].tolist(), group["samples"].iloc[-1]]
+        ordered = group.sort_values("bin_start")
+        xs, ys = _outline(
+            ordered["bin_start"].tolist(), ordered["bin_end"].tolist(), ordered["samples"].tolist()
+        )
         fig.add_trace(
             go.Scatter(
                 name=name,
-                x=edges,
-                y=counts,
+                x=xs,
+                y=ys,
                 mode="lines",
                 line={"shape": "hv", "color": CATEGORY_COLORS.get(name, PRIMARY), "width": 2},
             )
