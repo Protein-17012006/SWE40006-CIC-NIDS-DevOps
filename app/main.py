@@ -3,7 +3,7 @@
 import streamlit as st
 
 from app import telemetry
-from app.components import layout
+from app.components import filters, layout
 from app.config import get_settings
 
 # (file, title, Material icon, slug used in page_render logs). The folder is views/, not pages/:
@@ -32,6 +32,7 @@ navigation = st.navigation(
         for index, (file, title, icon, _) in enumerate(PAGES)
     ]
 )
+filters.sidebar_filters()
 layout.env_banner(settings)
 layout.sidebar_footer(settings)
 

@@ -1,8 +1,19 @@
-"""Shared page furniture: environment banner, sidebar brand and footer, headers, KPI tiles."""
+"""Shared page furniture: environment banner, sidebar brand and footer, headers, tiles, cards."""
 
+import re
+from collections.abc import Callable, Sequence
+
+import pandas as pd
 import streamlit as st
 
+from app.components.filters import Filters
+from app.components.guard import missing
 from app.config import Settings
+from app.telemetry import first_line, log_event
+
+NO_FLOWS = "No flows match the filters."
+CARD_FAILED = "This card could not load its data. The logs have the error."
+HIDDEN = "Hidden: this chart needs the {field} field."
 
 
 def env_banner(settings: Settings) -> None:
@@ -37,3 +48,61 @@ def kpi_tile(label: str, value: str, caption: str) -> None:
 
 def coming_soon(requirement_ids: str) -> None:
     st.info(f"This page arrives in a later release ({requirement_ids}).")
+
+
+def _card_title(title: str) -> None:
+    st.markdown(f"**{title}**")
+
+
+def hidden_card(title: str, field: str) -> None:
+    """The card a chart leaves when the dataset lacks a field it needs (UI-08)."""
+    with st.container(border=True):
+        _card_title(title)
+        st.caption(HIDDEN.format(field=field))
+
+
+def chart_card(
+    title: str,
+    caption: str | Callable[[pd.DataFrame], str],
+    load: Callable[[], pd.DataFrame],
+    render: Callable[[pd.DataFrame], None],
+    *,
+    filters: Filters | None = None,
+    needs: Sequence[str] = (),
+    csv: bool = True,
+) -> None:
+    """A bordered card: hidden without a needed field, a warning when its query fails,
+    a note when nothing matches, else the caption, the visual and its data as CSV (UI-11)."""
+    lacking = missing(filters, needs) if filters is not None else []
+    if lacking:
+        hidden_card(title, lacking[0])
+        return
+    with st.container(border=True):
+        head = st.container(
+            horizontal=True, horizontal_alignment="distribute", vertical_alignment="center"
+        )
+        with head:
+            _card_title(title)
+        try:
+            frame = load()
+        except Exception as exc:
+            log_event("query_failed", level="ERROR", card=title, message=first_line(exc))
+            st.warning(CARD_FAILED)
+            return
+        if frame.empty:
+            st.info(NO_FLOWS)
+            return
+        st.caption(caption(frame) if callable(caption) else caption)
+        render(frame)
+        if csv:
+            slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+            with head:
+                st.download_button(
+                    "CSV",
+                    frame.to_csv(index=False),
+                    file_name=f"{slug}.csv",
+                    mime="text/csv",
+                    key=f"csv-{slug}",
+                    type="tertiary",
+                    icon=":material/download:",
+                )

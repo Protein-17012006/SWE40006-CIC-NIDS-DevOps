@@ -21,6 +21,12 @@ def _env_and_version() -> tuple[str, str]:
     return settings.app_env, settings.app_version
 
 
+def first_line(exc: BaseException) -> str:
+    """An error's first line for a log field: database errors append the SQL after it."""
+    text = str(exc)
+    return text.splitlines()[0] if text else type(exc).__name__
+
+
 def log_event(event: str, *, level: str = "INFO", **fields: object) -> dict[str, object]:
     """Print one JSON object on one line of stdout; fields named like secrets are dropped."""
     env, version = _env_and_version()

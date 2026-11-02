@@ -38,3 +38,17 @@ ATTACK_CATEGORIES: tuple[str, ...] = (
     "Botnet",
     "Infiltration",
 )
+ATTACK_ONLY: tuple[str, ...] = ATTACK_CATEGORIES[1:]
+
+# One colour per category on every chart (UI-09), checked for colour-blind separation in report
+# section 5.1. Brute force, Web attack and Botnet have under 3:1 contrast on white, so charts that
+# use them carry value labels or sit beside a table. .streamlit/config.toml repeats them in order.
+CATEGORY_COLORS: dict[str, str] = {
+    "Benign": "#8F8D86",
+    "DoS": "#2A78D6",
+    "DDoS": "#EB6834",
+    "Brute force": "#1BAF7A",
+    "Web attack": "#EDA100",
+    "Botnet": "#E87BA4",
+    "Infiltration": "#008300",
+}
