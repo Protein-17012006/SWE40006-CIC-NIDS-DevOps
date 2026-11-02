@@ -41,12 +41,11 @@ def full_day(df: pd.DataFrame, by: str) -> pd.DataFrame:
 
 def hourly_chart(df: pd.DataFrame, labelled: bool) -> None:
     if labelled:
-        charts.show(
-            charts.stacked(full_day(df, "attack_category"), "hour", "flows", "attack_category")
-        )
+        fig = charts.stacked(full_day(df, "attack_category"), "hour", "flows", "attack_category")
+        charts.show(charts.hour_axis(fig))
     else:
         totals = full_day(df.assign(traffic="All traffic"), "traffic")
-        charts.show(charts.bars(totals, "flows", "hour", horizontal=False))
+        charts.show(charts.hour_axis(charts.bars(totals, "flows", "hour", horizontal=False)))
 
 
 def peak_caption(df: pd.DataFrame, labelled: bool) -> str:

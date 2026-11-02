@@ -11,9 +11,10 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from app.components.format import compact
+from app.components.format import compact, hour_label
 from app.components.format import percent as share_label  # stacked() has a percent flag
 from app.data.fields import ATTACK_CATEGORIES, CATEGORY_COLORS
+from app.data.ports import port_label
 
 PRIMARY = "#6750A4"
 CHART_HEIGHT = 300
@@ -45,6 +46,14 @@ def _finish(fig: go.Figure, *, legend: bool = False, height: int = CHART_HEIGHT)
 # A log axis labels only the powers of ten; the 2s and 5s in between crowd it
 LOG_AXIS = {"type": "log", "dtick": 1}
 
+# 24 hour labels turn upright and run under a legend below the chart, so label every third hour
+HOUR_TICKS = [hour_label(hour) for hour in range(0, 24, 3)]
+
+
+def hour_axis(fig: go.Figure) -> go.Figure:
+    fig.update_xaxes(tickmode="array", tickvals=HOUR_TICKS, tickangle=0)
+    return fig
+
 
 def _name(value: object) -> str:
     return ALL_TRAFFIC if value is None or pd.isna(value) else str(value)
@@ -75,6 +84,11 @@ def bars(
     if horizontal:
         fig.update_yaxes(autorange="reversed")  # the first row on top
     return _finish(fig)
+
+
+def port_bars(df: pd.DataFrame) -> go.Figure:
+    """Destination ports as labelled bars ("80 · HTTP") in the primary colour."""
+    return bars(df.assign(port=df["dst_port"].map(port_label)), "flows", "port")
 
 
 def stacked(

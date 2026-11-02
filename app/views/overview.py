@@ -12,7 +12,6 @@ from app.components.filters import Filters, page_filters
 from app.components.format import compact, hour_label, percent, plural, span_label, stamp_label
 from app.components.layout import chart_card, kpi_tile, load_or_warn, page_header
 from app.data import queries
-from app.data.ports import port_label
 
 
 def new_columns(f: Filters) -> list[str]:
@@ -44,11 +43,7 @@ def labels_table(df: pd.DataFrame) -> None:
 
 def hourly_bars(df: pd.DataFrame) -> None:
     hours = df.assign(hour=df["hour"].map(hour_label))
-    charts.show(charts.bars(hours, "flows", "hour", horizontal=False))
-
-
-def port_bars(df: pd.DataFrame) -> None:
-    charts.show(charts.bars(df.assign(port=df["dst_port"].map(port_label)), "flows", "port"))
+    charts.show(charts.hour_axis(charts.bars(hours, "flows", "hour", horizontal=False)))
 
 
 def category_card(f: Filters, span: str) -> None:
@@ -156,7 +151,7 @@ else:
             "Top destination ports",
             "All traffic · linear scale",
             lambda: queries.top_ports(f, 8, attack_only=False),
-            port_bars,
+            lambda df: charts.show(charts.port_bars(df)),
             filters=f,
             needs=("dst_port",),
         )
