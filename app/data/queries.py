@@ -6,6 +6,7 @@ rows without a time are kept, and the category filter applies only to labelled d
 
 from __future__ import annotations
 
+from datetime import date
 from typing import TYPE_CHECKING
 
 import pandas as pd
@@ -159,4 +160,59 @@ def top_ports(f: Filters, limit: int = 10, attack_only: bool = True) -> pd.DataF
         time="day",
         limit=limit,
         attack_only=attack_only,
+    )
+
+
+# Timeline (UI-03)
+
+
+@st.cache_data(ttl=300)
+def capture_days(f: Filters) -> pd.DataFrame:
+    """Each capture day with its flows and attack flows (0 without a label)."""
+    return _scoped(
+        "SELECT hour::date AS day, SUM(flows)::bigint AS flows, "
+        "COALESCE(SUM(flows) FILTER (WHERE attack_category <> 'Benign'), 0)::bigint "
+        "AS attack_flows FROM agg_hourly WHERE {where} AND hour IS NOT NULL "
+        "GROUP BY 1 ORDER BY 1",
+        f,
+    )
+
+
+@st.cache_data(ttl=300)
+def attack_flows_per_day(f: Filters) -> pd.DataFrame:
+    return _scoped(
+        "SELECT hour::date AS day, attack_category, SUM(flows)::bigint AS flows "
+        "FROM agg_hourly WHERE {where} AND hour IS NOT NULL "
+        "AND attack_category <> 'Benign' GROUP BY 1, 2 ORDER BY 1, 2",
+        f,
+    )
+
+
+@st.cache_data(ttl=300)
+def flows_per_hour_on(f: Filters, day: date) -> pd.DataFrame:
+    """Flows per hour and label on one capture day, Benign included."""
+    return _scoped(
+        "SELECT EXTRACT(HOUR FROM hour)::int AS hour, label, attack_category, "
+        "SUM(flows)::bigint AS flows FROM agg_hourly "
+        "WHERE {where} AND hour >= :day AND hour < :day + INTERVAL '1 day' "
+        "GROUP BY 1, 2, 3 ORDER BY 1, flows DESC, label",
+        f,
+        day=day,
+    )
+
+
+@st.cache_data(ttl=300)
+def busiest_hours(f: Filters, limit: int = 5) -> pd.DataFrame:
+    """The hours with the most flows; the main category is the largest in that hour."""
+    return _scoped(
+        "WITH per_hour AS (SELECT hour, attack_category, SUM(flows) AS flows "
+        "FROM agg_hourly WHERE {where} AND hour IS NOT NULL GROUP BY 1, 2), "
+        "ranked AS (SELECT hour, SUM(flows) OVER (PARTITION BY hour) AS total, "
+        "attack_category, ROW_NUMBER() OVER "
+        "(PARTITION BY hour ORDER BY flows DESC, attack_category) AS place FROM per_hour) "
+        "SELECT hour::date AS day, EXTRACT(HOUR FROM hour)::int AS hour, "
+        "total::bigint AS flows, attack_category AS main_category FROM ranked "
+        "WHERE place = 1 ORDER BY flows DESC, day, hour LIMIT :limit",
+        f,
+        limit=limit,
     )

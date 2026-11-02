@@ -8,7 +8,7 @@ from streamlit.testing.v1 import AppTest
 from app.components.filters import DB_DOWN, NO_DATA
 
 APP = Path(__file__).resolve().parents[2] / "app"
-PAGES = ["overview"]  # each page's pull request adds its view
+PAGES = ["overview", "timeline"]  # each page's pull request adds its view
 
 
 def _run(page: str) -> AppTest:
