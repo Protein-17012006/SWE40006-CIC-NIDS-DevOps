@@ -83,6 +83,8 @@ aws s3 cp /tmp/simulated-real-traffic-01.csv s3://cicnids-staging-<account id>/r
 
 ## Demo: merge the simulated contract
 
+Before presenting, open each of the six pages once in the browser you will present from. A browser's first visit downloads about 10 MB of JavaScript, which Streamlit serves uncompressed (Plotly's chart code alone is 4.6 MB), so the charts took 25 to 50 seconds to appear from a home connection to `us-east-1`. Later visits load from the browser's cache in about 3 seconds. The server renders every page in under a second either way.
+
 The simulated file starts out quarantined, because no contract in `contracts/` matches it. During the demo:
 
 1. Download `quarantine/simulated-real-traffic-01/simulated-real-traffic-01/draft-contract.yaml` and save it as `contracts/simulated-real-traffic.yaml`. It is the same as `tests/fixtures/contracts/simulated-real-traffic.yaml`.
