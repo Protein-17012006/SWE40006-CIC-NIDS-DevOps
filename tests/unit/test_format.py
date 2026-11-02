@@ -83,3 +83,23 @@ def test_plural():
     ]
     assert plural(6, "category", "categories") == "6 categories"
     assert plural(1, "category", "categories") == "1 category"
+
+
+@pytest.mark.parametrize(
+    "value, unit, text",
+    [
+        (1234, "pkt", "1.23 k pkt"),
+        (2_500_000, "pkt/s", "2.5 M pkt/s"),
+        (65535, "", "65.5 k"),
+        (999.6, "pkt", "1 k pkt"),
+        (999_600, "µs", "1 s"),
+        (-1, "", "-1"),
+    ],
+)
+def test_with_unit_never_prints_scientific_notation(value, unit, text):
+    assert with_unit(value, unit) == text
+
+
+@pytest.mark.parametrize("n, text", [(999.6, "1 k"), (999_600, "1 M"), (999_999_999, "1 B")])
+def test_compact_rounds_up_into_the_next_suffix(n, text):
+    assert compact(n) == text

@@ -2,8 +2,8 @@
 
 from datetime import date, datetime
 
-_COUNT_SCALES = ((1e9, " B"), (1e6, " M"), (1e3, " k"))
-# Each unit scales by thousands to the next, largest first
+# Scales by thousands, largest first, each ending at 1
+_COUNT_SCALES = ((1e9, "B"), (1e6, "M"), (1e3, "k"), (1, ""))
 _UNIT_SCALES = {
     "µs": ((1e6, "s"), (1e3, "ms"), (1, "µs")),
     "B": ((1e9, "GB"), (1e6, "MB"), (1e3, "kB"), (1, "B")),
@@ -11,12 +11,25 @@ _UNIT_SCALES = {
 }
 
 
+def _scaled(value: float, scales: tuple[tuple[float, str], ...]) -> tuple[str, str]:
+    """Three significant digits in the largest scale the value reaches. A value that rounds up
+    to 1,000 (999.6) moves to the next scale, so .3g never falls back to 1e+03."""
+    for place, (factor, name) in enumerate(scales):
+        if abs(value) < factor and factor != 1:
+            continue
+        text = f"{value / factor:.3g}"
+        if abs(float(text)) < 1000:
+            return text, name
+        if place == 0:  # beyond the largest scale: whole numbers with separators
+            return f"{value / factor:,.0f}", name
+        bigger, bigger_name = scales[place - 1]
+        return f"{value / bigger:.3g}", bigger_name
+    raise ValueError(f"no scale for {value}")  # unreachable: every scale list ends at 1
+
+
 def compact(n: float) -> str:
     """Three significant digits with a k, M or B suffix: 7155 reads 7.16 k."""
-    for scale, suffix in _COUNT_SCALES:
-        if abs(n) >= scale:
-            return f"{n / scale:.3g}{suffix}"
-    return f"{n:.3g}"
+    return " ".join(part for part in _scaled(n, _COUNT_SCALES) if part)
 
 
 def plural(n: int, one: str, many: str | None = None) -> str:
@@ -56,11 +69,13 @@ def hour_label(hour: int) -> str:
 
 
 def with_unit(value: float, unit: str) -> str:
-    """A value in the largest unit that keeps it at 1 or more: 30,000 µs reads 30 ms."""
-    for scale, name in _UNIT_SCALES.get(unit, ()):
-        if abs(value) >= scale or scale == 1:
-            return f"{value / scale:.3g} {name}"
-    return f"{value:.3g} {unit}".rstrip()
+    """A value in the largest unit that keeps it at 1 or more: 30,000 µs reads 30 ms. Units
+    without their own scale take a k, M or B prefix: 1,234 pkt reads 1.23 k pkt."""
+    if unit in _UNIT_SCALES:
+        text, name = _scaled(value, _UNIT_SCALES[unit])
+        return f"{text} {name}"
+    text, prefix = _scaled(value, _COUNT_SCALES)
+    return " ".join(part for part in (text, prefix, unit) if part)
 
 
 def basename(key: str) -> str:
