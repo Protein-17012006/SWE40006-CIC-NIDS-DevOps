@@ -5,10 +5,14 @@ import sqlalchemy as sa
 
 from app.data.db import make_engine, ping
 from app.data.queries import (
+    attack_flows_per_day,
     attack_mix,
+    busiest_hours,
+    capture_days,
     dataset_files,
     flows_by_category,
     flows_per_hour,
+    flows_per_hour_on,
     kpi_totals,
     last_ingestion_run,
     loaded_datasets,
@@ -122,3 +126,47 @@ def test_flows_per_hour_and_dataset_files(filters_for):
     ]
     assert dataset_files("cse-cic-ids2018")["run_id"].tolist() == [1, 3]
     assert dataset_files(UNLABELLED)["new_columns"].iloc[0] == ["pkt_entropy", "geo_country"]
+
+
+@pytest.mark.db
+def test_capture_days(filters_for):
+    assert capture_days(filters_for()).values.tolist() == [
+        [date(2018, 2, 14), 3405, 905],
+        [date(2018, 2, 21), 3750, 2650],
+    ]
+    assert capture_days(filters_for(UNLABELLED)).values.tolist() == [[date(2018, 3, 2), 1000, 0]]
+
+
+@pytest.mark.db
+def test_attack_flows_per_day_leaves_out_benign(filters_for):
+    per_day = attack_flows_per_day(filters_for())
+    day = per_day[per_day["day"] == date(2018, 2, 21)]
+    assert dict(zip(day.attack_category, day.flows, strict=True)) == {
+        "DDoS": 2000,
+        "DoS": 600,
+        "Infiltration": 50,
+    }
+    assert "Benign" not in per_day["attack_category"].tolist()
+
+
+@pytest.mark.db
+def test_flows_per_hour_on_one_day(filters_for):
+    hours = flows_per_hour_on(filters_for(), date(2018, 2, 21))
+    at_two = hours[hours["hour"] == 14]
+    assert dict(zip(at_two.label, at_two.flows, strict=True)) == {
+        "DDOS attack-HOIC": 2000,
+        "Benign": 200,
+    }
+    assert sorted(hours["hour"].unique().tolist()) == [9, 14, 15, 16]
+
+
+@pytest.mark.db
+def test_busiest_hours(filters_for):
+    assert busiest_hours(filters_for()).values.tolist() == [
+        [date(2018, 2, 21), 14, 2200, "DDoS"],
+        [date(2018, 2, 14), 10, 1400, "Benign"],
+        [date(2018, 2, 14), 9, 1000, "Benign"],
+        [date(2018, 2, 21), 9, 900, "Benign"],
+        [date(2018, 2, 14), 11, 800, "Benign"],
+    ]
+    assert busiest_hours(filters_for(UNLABELLED))["main_category"].isna().all()
