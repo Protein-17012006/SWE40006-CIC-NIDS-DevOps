@@ -13,6 +13,8 @@ How to set up, release, roll back, pause and tear down the CIC-NIDS pipeline. Ev
 
 The Pipeline page of each environment shows its name, the image tag it runs (the 7-character commit hash) and whether it reaches its database.
 
+Test holds only what its end-to-end test loads. Every deployment to test resets its database and bucket, uploads each contract-test sample (`tests/contracts/`) to `raw/` so S3 and EventBridge ingest it, checks every run, and renders every page against the result. The test job's log shows one `e2e_check` line per sample and per page, then an `e2e_summary`; a failed check stops the release before staging.
+
 ## First-time setup
 
 These steps were done once on 31 October 2026; repeat them only for a new account or a new repository.
@@ -36,7 +38,7 @@ These steps were done once on 31 October 2026; repeat them only for a new accoun
 
 1. Open a pull request. CI runs lint, tests with coverage, cfn-lint, and a Docker build with a Trivy scan. A pull request that touches the shared templates also gets a change-set preview in its Infrastructure run summary.
 2. Merge when the checks are green. CD builds the image once, tags it with the commit hash and pushes it to ECR.
-3. For each environment, `scripts/ci/deploy_env.sh` updates the stack with the new job image, runs `db-bootstrap` and the migrations as one-off ECS tasks, updates the stack with the new app image, runs the smoke test, and starts `reconcile` without waiting for it.
+3. For each environment, `scripts/ci/deploy_env.sh` starts the RDS instance if it was stopped, updates the stack with the new job image, runs `db-bootstrap` and the migrations as one-off ECS tasks, updates the stack with the new app image, and runs the smoke test. Test then runs the end-to-end test and waits for it; the others start `reconcile` without waiting for it.
 4. Development, test and staging deploy in turn. Production waits in the CD run until a reviewer opens it, chooses **Review deployments** and approves `production`. The production job then writes a parity table: the tag each environment runs.
 
 Changes to `docs/` or Markdown files do not start CD. Changes to the shared templates start the Infrastructure workflow, which waits for approval in `platform`.

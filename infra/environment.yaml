@@ -39,6 +39,9 @@ Parameters:
     Type: String
     Default: cicnids-databases
 
+Conditions:
+  IsTest: !Equals [!Ref EnvName, test]
+
 Resources:
   # raw/ for uploads (never edited), processed/ for Parquet, quarantine/ for reports
   Bucket:
@@ -229,6 +232,13 @@ Resources:
               - Effect: Allow
                 Action: s3:DeleteObject
                 Resource: !Sub ${Bucket.Arn}/processed/*
+              # Except in test, whose end-to-end run resets its whole bucket first
+              - !If
+                - IsTest
+                - Effect: Allow
+                  Action: s3:DeleteObject
+                  Resource: !Sub ${Bucket.Arn}/*
+                - !Ref AWS::NoValue
 
   AppTaskDefinition:
     Type: AWS::ECS::TaskDefinition

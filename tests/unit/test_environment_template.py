@@ -69,16 +69,31 @@ def test_events_role_may_run_only_this_environments_job():
     ]
 
 
-def test_task_role_may_delete_only_processed_objects():
+def test_only_test_may_delete_outside_processed():
     statements = policy(resources()["TaskRole"], "own-bucket")
-    deletes = [s for s in statements if "s3:DeleteObject" in str(s["Action"])]
-    assert deletes == [
+    plain = [s for s in statements if "Fn::If" not in s and "s3:DeleteObject" in _actions(s)]
+    assert plain == [
         {
             "Effect": "Allow",
             "Action": "s3:DeleteObject",
             "Resource": {"Fn::Sub": "${Bucket.Arn}/processed/*"},
         }
     ]
+    assert [s for s in statements if "Fn::If" in s] == [
+        {
+            "Fn::If": [
+                "IsTest",
+                {
+                    "Effect": "Allow",
+                    "Action": "s3:DeleteObject",
+                    "Resource": {"Fn::Sub": "${Bucket.Arn}/*"},
+                },
+                {"Ref": "AWS::NoValue"},
+            ]
+        }
+    ]
+    conditions = load(str(INFRA / "environment.yaml"))["Conditions"]
+    assert conditions["IsTest"] == {"Fn::Equals": [{"Ref": "EnvName"}, "test"]}
 
 
 def test_databases_keep_seven_days_of_backups():

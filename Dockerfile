@@ -22,6 +22,8 @@ COPY migrations/ migrations/
 COPY app/ app/
 COPY pipeline/ pipeline/
 COPY contracts/ contracts/
+# The end-to-end test's samples: python -m pipeline e2e uploads them in the test environment
+COPY tests/contracts/ tests/contracts/
 
 RUN useradd --create-home --uid 10001 cicnids
 USER cicnids

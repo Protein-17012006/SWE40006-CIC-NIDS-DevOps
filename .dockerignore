@@ -7,6 +7,8 @@ docs
 infra
 scripts
 tests
+!tests/contracts
+tests/contracts/**/*.py
 local_s3
 **/__pycache__
 .pytest_cache
