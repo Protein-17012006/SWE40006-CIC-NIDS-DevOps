@@ -100,6 +100,27 @@ def _status(args: argparse.Namespace) -> str:
     return f"{len(datasets)} datasets"
 
 
+def _e2e(args: argparse.Namespace) -> str:
+    if get_settings().app_env != "test":
+        raise RuntimeError(
+            "e2e resets its database and bucket, so it runs only in the test environment"
+        )
+    from pipeline import e2e
+    from pipeline.contracts import load_contracts
+    from pipeline.storage import Bucket
+
+    url, bucket_name = _database_url(), _bucket_name()
+    engine = sa.create_engine(url, pool_pre_ping=True)
+    try:
+        failures = e2e.run(engine, Bucket(bucket_name), load_contracts())
+    finally:
+        engine.dispose()
+    if failures:
+        checks = "check" if len(failures) == 1 else "checks"
+        raise RuntimeError(f"{len(failures)} end-to-end {checks} failed; the first: {failures[0]}")
+    return "every end-to-end check passed"
+
+
 COMMANDS: dict[str, tuple[str, Callable[[argparse.Namespace], str]]] = {
     "migrate": ("apply every Alembic migration (alembic upgrade head)", _migrate),
     "db-bootstrap": (
@@ -112,6 +133,11 @@ COMMANDS: dict[str, tuple[str, Callable[[argparse.Namespace], str]]] = {
         _reconcile,
     ),
     "status": ("log each dataset's status and the size of each table", _status),
+    "e2e": (
+        "reset the test environment, ingest every contract-test sample through S3, check the "
+        "results and render every page",
+        _e2e,
+    ),
 }
 
 
