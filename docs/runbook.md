@@ -117,6 +117,16 @@ Each environment's stack carries its monitoring, so every deployment creates or 
 
 Run the **Ingest** workflow with the environment and the target `raw/alarm-test.csv`. The file does not exist, so the run fails on purpose and records no ingestion run. `cicnids-<env>-failed-ingestion` fires within a couple of minutes and emails, and the recovery email follows a minute later. In production the run waits for approval like every production Ingest run.
 
+## Load test
+
+Every staging and production deployment, rollbacks included, runs under load. Once the app answers through the load balancer, 20 Locust users (`tests/load/locustfile.py`) load the page shell, its static files and `/_stcore/health` from the GitHub runner, from just before ECS replaces the app's task until after the smoke test. In production the load stays on for at least 5 minutes, so every production release shows 20 users for 5 minutes on the dashboard.
+
+- **Fails the deployment:** any failed request (a 5xx, a refused or reset connection), or a run that sent no requests or wrote no statistics. In production the new version is already serving by then; the red job is the signal to look and, if needed, roll back.
+- **Only warns:** a 95th percentile above 2 seconds, because the network between GitHub and AWS varies.
+- **Where to read it:** the job summary's "Load test" table, and the artifact `locust-<env>-<tag>` with Locust's CSV statistics and log.
+
+Streamlit draws pages over a WebSocket that Locust does not speak, so page speed is judged by the `PageRenderTime` metric instead. To explore by hand, with Locust's web UI, from the repository root: `pip install -r tests/load/requirements.txt`, then `locust -f tests/load/locustfile.py --host http://cicnids-1239707461.us-east-1.elb.amazonaws.com:8080`.
+
 ## Stop and start environments by hand
 
 Stopping is by hand. A stopped service has no Fargate cost and a stopped RDS instance no compute cost; the load balancer keeps running, because it can only be deleted. To stop everything:

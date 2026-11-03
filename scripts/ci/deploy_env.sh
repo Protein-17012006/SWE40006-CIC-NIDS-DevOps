@@ -7,6 +7,8 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 # shellcheck source=scripts/ci/lib.sh
 source scripts/ci/lib.sh
+# shellcheck source=scripts/ci/load_test.sh
+source scripts/ci/load_test.sh
 
 usage="usage: deploy_env.sh ENV TAG [--skip-migrations]"
 env_name=${1:?$usage}
@@ -59,12 +61,35 @@ else
   bash scripts/ci/run_task.sh "$env_name" job python -m pipeline migrate
 fi
 
+# Staging and production take load while ECS replaces the app's task (NFR-02): Locust runs from
+# just before the update until after the smoke test, and any failed request fails the release.
+load_dir=""
+if [[ "$env_name" == staging || "$env_name" == production ]]; then
+  load_dir=${LOAD_TEST_DIR:-$(mktemp -d)}
+  host=$(stack_output cicnids-platform AlbDnsName)
+  port=$(stack_output "$stack" ListenerPort)
+  # A service started in step 2 may still be warming up; its 503s would not be this release's
+  curl -fsS --retry 18 --retry-delay 10 --retry-all-errors --max-time 10 \
+    "http://$host:$port/_stcore/health" >/dev/null ||
+    log "the app does not answer before the update; the load test starts anyway"
+  trap 'load_test_abort "$load_dir"' EXIT
+  load_test_start "http://$host:$port" "$load_dir"
+fi
+
 # 4. The application: ECS replaces tasks without dropping traffic (NFR-02)
 deploy_stack "$stack" infra/environment.yaml "$env_name" "${params[@]}" \
   "JobImageTag=$tag" "AppImageTag=$tag"
 
 # 5. Smoke test (OPS-07)
 bash scripts/ci/smoke_test.sh "$env_name" "$tag"
+
+# The load test's verdict. Production's run lasts at least 5 minutes, so every production release
+# leaves the brief's performance evidence: 20 users for 5 minutes.
+if [[ -n "$load_dir" ]]; then
+  min_seconds=0
+  if [[ "$env_name" == production ]]; then min_seconds=300; fi
+  load_test_finish "$load_dir" "$min_seconds"
+fi
 
 # 6. Rollbacks skip both commands below: an older image may not have them.
 #    In test, the end-to-end test resets test's data, ingests every contract-test sample through

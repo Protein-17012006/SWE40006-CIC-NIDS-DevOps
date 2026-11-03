@@ -2,6 +2,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -185,3 +186,55 @@ def test_db_instance_rejects_unknown_environments():
         text=True,
     )
     assert result.returncode == 2
+
+
+# The header line of Locust's _stats.csv
+STATS_HEADER = (
+    "Type,Name,Request Count,Failure Count,Median Response Time,Average Response Time,"
+    "Min Response Time,Max Response Time,Average Content Size,Requests/s,Failures/s,"
+    "50%,66%,75%,80%,90%,95%,98%,99%,99.9%,99.99%,100%"
+)
+
+
+@pytest.fixture
+def fake_locust(tmp_path):
+    """A locust that writes an Aggregated row with $FAKE_FAILURES failures to its --csv
+    prefix, then waits to be stopped."""
+    script = tmp_path / "locust"
+    script.write_text(
+        "#!/usr/bin/env bash\n"
+        'while (($#)); do [[ "$1" == --csv ]] && prefix=$2; shift; done\n'
+        "printf '%s\\n,Aggregated,100,%s,1,1,1,1,1,1,0,1,1,1,1,1,150,1,1,1,1,1\\n' "
+        f'"{STATS_HEADER}" "$FAKE_FAILURES" > "${{prefix}}_stats.csv"\n'
+        "printf 'Method,Name,Error,Occurrences\\n' > \"${prefix}_failures.csv\"\n"
+        "exec sleep 60\n",
+        newline="\n",
+    )
+    script.chmod(0o755)
+    return script
+
+
+@needs_bash
+@pytest.mark.parametrize(("failures", "code"), [(0, 0), (2, 1)])
+def test_load_test_reports_the_verdict(fake_locust, tmp_path, failures, code):
+    env = {
+        **os.environ,
+        "LOCUST": fake_locust.as_posix(),
+        "PYTHON": Path(sys.executable).as_posix(),
+        "FAKE_FAILURES": str(failures),
+        "D": (tmp_path / "run").as_posix(),
+    }
+    result = subprocess.run(  # noqa: S603
+        [
+            BASH,
+            "-c",
+            'mkdir -p "$D" && source scripts/ci/lib.sh && source scripts/ci/load_test.sh'
+            ' && load_test_start http://localhost:1 "$D" && sleep 2 && load_test_finish "$D" 0',
+        ],
+        cwd=REPO,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == code and "Requests" in result.stdout
