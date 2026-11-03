@@ -64,3 +64,11 @@ def test_ingest_without_bucket_fails_cleanly(settings_env, monkeypatch, capsys):
     rec = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert (rec["event"], rec["status"]) == ("ingest", "failed")
     assert "S3_BUCKET" in rec["message"]
+
+
+def test_e2e_refuses_outside_test(settings_env, monkeypatch, capsys):
+    monkeypatch.setenv("APP_ENV", "staging")
+    assert main(["e2e"]) == 1
+    rec = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert (rec["event"], rec["status"]) == ("e2e", "failed")
+    assert "only in the test" in rec["message"]

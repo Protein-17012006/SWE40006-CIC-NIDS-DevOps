@@ -66,10 +66,14 @@ deploy_stack "$stack" infra/environment.yaml "$env_name" "${params[@]}" \
 # 5. Smoke test (OPS-07)
 bash scripts/ci/smoke_test.sh "$env_name" "$tag"
 
-# 6. Re-ingest the files the new contracts read differently (ING-09), without waiting.
-#    Rollbacks skip it: an older image may not have the command.
+# 6. Rollbacks skip both commands below: an older image may not have them.
+#    In test, the end-to-end test resets test's data, ingests every contract-test sample through
+#    S3 and EventBridge, and renders every page; a failure stops the release before staging.
+#    Elsewhere, re-ingest the files the new contracts read differently (ING-09), without waiting.
 if [[ "$skip_migrations" == true ]]; then
-  log "rollback: not starting reconcile"
+  log "rollback: not starting reconcile or the end-to-end test"
+elif [[ "$env_name" == test ]]; then
+  TASK_TIMEOUT_MINUTES=15 bash scripts/ci/run_task.sh test job python -m pipeline e2e
 else
   bash scripts/ci/run_task.sh --no-wait "$env_name" job python -m pipeline reconcile
 fi
