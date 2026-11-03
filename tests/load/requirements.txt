@@ -1,0 +1,2 @@
+# Installed on the GitHub runner only, for the deployment load test; never in the image
+locust==2.46.7
