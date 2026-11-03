@@ -25,7 +25,7 @@ These steps were done once on 31 October 2026; repeat them only for a new accoun
      --capabilities CAPABILITY_NAMED_IAM --tags Project=cic-nids Environment=shared --region us-east-1
    ```
 
-   The roles trust GitHub's immutable OIDC subjects, which carry the owner and repository ids. For another repository, pass its prefix as `GitHubSubjectPrefix`: `gh api repos/OWNER/REPO/actions/oidc/customization/sub --jq .sub_claim_prefix`.
+   The roles trust GitHub's immutable OIDC subjects, which carry the owner and repository ids. For another repository, pass its prefix as `GitHubSubjectPrefix`: `gh api repos/OWNER/REPO/actions/oidc/customization/sub --jq .sub_claim_prefix`. Each deploy role may start, but never stop, its tier's RDS instance, so a deployment can bring a stopped database back. When `infra/bootstrap.yaml` changes, deploy it again with the same command; the Infrastructure workflow only reminds you.
 2. In GitHub, set the secret `AWS_ACCOUNT_ID` (a secret, so public logs mask it) and the variable `AWS_REGION=us-east-1`. The variable `ALERT_EMAIL` is optional; when set, the platform stack subscribes it to the alerts topic.
 3. Create the environments development, test and staging without rules, and production and platform with a required reviewer.
 4. Run the Infrastructure workflow and approve `platform`. It creates `cicnids-platform`, then `cicnids-databases` (about 15 minutes).
@@ -94,15 +94,21 @@ The simulated file starts out quarantined, because no contract in `contracts/` m
 
 ## Stop and start environments by hand
 
-Stopping a service stops its Fargate cost; the load balancer and RDS keep running.
+Stopping is by hand. A stopped service has no Fargate cost and a stopped RDS instance no compute cost; the load balancer keeps running, because it can only be deleted. To stop everything:
 
 ```bash
 export AWS_PROFILE=hoang
-aws ecs update-service --cluster cicnids-nonprod --service cicnids-staging --desired-count 0
-aws ecs update-service --cluster cicnids-nonprod --service cicnids-staging --desired-count 1
+for env in development test staging; do
+  aws ecs update-service --cluster cicnids-nonprod --service "cicnids-$env" --desired-count 0
+done
+aws ecs update-service --cluster cicnids-prod --service cicnids-production --desired-count 0
+aws rds stop-db-instance --db-instance-identifier cicnids-nonprod
+aws rds stop-db-instance --db-instance-identifier cicnids-prod
 ```
 
-A deployment to a stopped environment starts one task first, so its smoke test has something to check. RDS instances can also be stopped for up to seven days (`aws rds stop-db-instance --db-instance-identifier cicnids-nonprod`).
+Starting needs nothing by hand. Every deployment (CD and Rollback) starts its environment's RDS instance when it is stopped, waits until the instance is available, and starts a stopped service with one task, so its smoke test has something to check. Every Ingest run starts the RDS instance too. The first of these after a stop takes 5 to 10 minutes longer. AWS starts an instance that has been stopped for seven days by itself.
+
+A file uploaded to `raw/` while the database is stopped fails to ingest; run the Ingest workflow with its key once the database is back. To start one service without deploying, start its RDS instance first (`aws rds start-db-instance --db-instance-identifier cicnids-nonprod`), then `aws ecs update-service --cluster cicnids-nonprod --service cicnids-staging --desired-count 1`.
 
 ## Account limits met on the way
 

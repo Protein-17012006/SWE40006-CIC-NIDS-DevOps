@@ -21,6 +21,9 @@ fi
 stack="cicnids-$env_name"
 mapfile -t params < <(read_params "$env_name")
 
+# 0. A database stopped by hand comes back first (5 to 10 minutes)
+ensure_database "$env_name"
+
 write_recent_tags() {
   local summary=${GITHUB_STEP_SUMMARY:-/dev/stdout}
   printf '### Newest image tags\n\n' >>"$summary"

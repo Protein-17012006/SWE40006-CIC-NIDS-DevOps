@@ -6,9 +6,9 @@
 
 Tick what applies; leave a note for anything that does not.
 
-- [ ] It follows its page in `docs/design/2026-11-02-dashboard-pages-design.md` section 5 and is usable at 1366 × 768
-- [ ] Every chart goes through the guard and has a Hidden state
-- [ ] AppTest passes on the labelled and the unlabelled fixture
+- [ ] It follows the design it implements (name the document and section)
+- [ ] For a page: usable at 1366 × 768, every chart goes through the guard and has a Hidden state, and AppTest passes on the labelled and the unlabelled fixture
 - [ ] No SQL outside `app/data/queries.py`, and no source column names outside `contracts/`
-- [ ] The page logs a `page_render` event, and logs hold no secrets or row data
+- [ ] Logs hold no secrets or row data, and nothing here contains an email address
+- [ ] Scripts are shellcheck-clean and templates cfn-lint-clean
 - [ ] CI is green, and after merge the change runs in development

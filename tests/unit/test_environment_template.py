@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 
+import pytest
 from cfnlint.decode.cfn_yaml import load
 
 INFRA = Path(__file__).resolve().parents[2] / "infra"
@@ -81,3 +82,33 @@ def test_task_role_may_delete_only_processed_objects():
 def test_databases_keep_seven_days_of_backups():
     for name in ("ProdDatabase", "NonprodDatabase"):
         assert resources("databases.yaml")[name]["Properties"]["BackupRetentionPeriod"] == 7
+
+
+DEPLOY_ROLES = {
+    "DeployRoleDevelopment": ("development", "cicnids-nonprod"),
+    "DeployRoleTest": ("test", "cicnids-nonprod"),
+    "DeployRoleStaging": ("staging", "cicnids-nonprod"),
+    "DeployRoleProduction": ("production", "cicnids-prod"),
+}
+
+
+def _actions(statement: dict) -> list[str]:
+    action = statement.get("Action", [])
+    return [action] if isinstance(action, str) else list(action)
+
+
+@pytest.mark.parametrize("role", sorted(DEPLOY_ROLES))
+def test_deploy_role_may_start_only_its_own_database(role):
+    env_name, instance = DEPLOY_ROLES[role]
+    statements = policy(resources("bootstrap.yaml")[role], f"deploy-{env_name}")
+    rds = [s for s in statements if any(a.startswith("rds:") for a in _actions(s))]
+    assert len(rds) == 1
+    assert sorted(_actions(rds[0])) == ["rds:DescribeDBInstances", "rds:StartDBInstance"]
+    assert rds[0]["Resource"] == {
+        "Fn::Sub": f"arn:${{AWS::Partition}}:rds:${{AWS::Region}}:${{AWS::AccountId}}:db:{instance}"
+    }
+
+
+def test_no_role_may_stop_a_database():
+    text = (INFRA / "bootstrap.yaml").read_text(encoding="utf-8")
+    assert "rds:Stop" not in text and "rds:*" not in text
