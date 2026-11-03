@@ -99,3 +99,89 @@ def test_run_task_reads_no_wait_before_the_environment(fake_aws):
 @pytest.mark.parametrize("env_name", ["test", "prod", ""])
 def test_load_baseline_rejects_unknown_environments(env_name, fake_aws):
     assert _run("scripts/load_baseline.sh", env_name, fake=fake_aws) == (2, False)
+
+
+@pytest.fixture
+def scripted_aws(tmp_path):
+    """An aws that logs each call and answers the n-th describe-db-instances with line n of
+    statuses.txt (the last line repeats), ending it with \r\n like the CLI on Windows."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    script = bin_dir / "aws"
+    script.write_text(
+        "#!/usr/bin/env bash\n"
+        'echo "$*" >> "$FAKE_AWS_LOG"\n'
+        'if [[ "$*" == *describe-db-instances* ]]; then\n'
+        '  n=$(grep -c describe-db-instances "$FAKE_AWS_LOG")\n'
+        '  line=$(sed -n "${n}p" "$FAKE_STATUSES")\n'
+        '  [[ -n "$line" ]] || line=$(tail -n 1 "$FAKE_STATUSES")\n'
+        "  printf '%s\r\n' \"$line\"\n"
+        "fi\n",
+        newline="\n",
+    )
+    script.chmod(0o755)
+    return bin_dir, tmp_path
+
+
+def _ensure(env_name, statuses, scripted, timeout_minutes=1) -> tuple[int, list[str]]:
+    bin_dir, tmp = scripted
+    (tmp / "statuses.txt").write_text("\n".join(statuses) + "\n", newline="\n")
+    calls = tmp / "calls.log"
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+        "FAKE_AWS_LOG": str(calls),
+        "FAKE_STATUSES": str(tmp / "statuses.txt"),
+        "DB_POLL_SECONDS": "0",
+        "DB_START_TIMEOUT_MINUTES": str(timeout_minutes),
+    }
+    result = subprocess.run(  # noqa: S603
+        [BASH, "-c", 'source scripts/ci/lib.sh && ensure_database "$1"', "bash", env_name],
+        cwd=REPO,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    return result.returncode, calls.read_text().splitlines() if calls.exists() else []
+
+
+def _kinds(calls):
+    return ["start" if "start-db-instance" in c else "describe" for c in calls]
+
+
+@needs_bash
+def test_available_database_is_left_alone(scripted_aws):
+    code, calls = _ensure("staging", ["available"], scripted_aws)
+    assert code == 0 and _kinds(calls) == ["describe"] and "cicnids-nonprod" in calls[0]
+
+
+@needs_bash
+def test_stopped_database_is_started_once(scripted_aws):
+    code, calls = _ensure("production", ["stopped", "starting", "available"], scripted_aws)
+    assert code == 0 and _kinds(calls) == ["describe", "start", "describe", "describe"]
+    assert "cicnids-prod" in calls[1]
+
+
+@needs_bash
+def test_stopping_database_is_started_after_it_stops(scripted_aws):
+    code, calls = _ensure("test", ["stopping", "stopping", "stopped", "available"], scripted_aws)
+    assert code == 0
+    assert _kinds(calls) == ["describe", "describe", "describe", "start", "describe"]
+
+
+@needs_bash
+def test_database_start_gives_up_after_the_timeout(scripted_aws):
+    code, calls = _ensure("development", ["starting"], scripted_aws, timeout_minutes=0)
+    assert code == 1 and "start" not in _kinds(calls)
+
+
+@needs_bash
+def test_db_instance_rejects_unknown_environments():
+    result = subprocess.run(  # noqa: S603
+        [BASH, "-c", "source scripts/ci/lib.sh && db_instance prod"],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 2

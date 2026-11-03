@@ -46,6 +46,49 @@ read_params() {
   grep -Ev '^[[:space:]]*(#|$)' "$file"
 }
 
+# db_instance ENV: the RDS instance that holds ENV's database.
+db_instance() {
+  case "${1:-}" in
+    production) printf 'cicnids-prod\n' ;;
+    development | test | staging) printf 'cicnids-nonprod\n' ;;
+    *)
+      log "usage: db_instance development|test|staging|production; got '${1:-}'"
+      return 2
+      ;;
+  esac
+}
+
+# ensure_database ENV: start ENV's RDS instance if it was stopped by hand, and return once it
+# is available. Waits through every other state (stopping, starting, backing-up); gives up
+# after DB_START_TIMEOUT_MINUTES (default 20), polling every DB_POLL_SECONDS (default 20).
+ensure_database() {
+  local instance status timeout_minutes deadline
+  instance=$(db_instance "$1")
+  timeout_minutes=${DB_START_TIMEOUT_MINUTES:-20}
+  deadline=$((SECONDS + timeout_minutes * 60))
+  while true; do
+    # The AWS CLI on Windows ends its text output with \r
+    status=$(aws rds describe-db-instances --db-instance-identifier "$instance" \
+      --query 'DBInstances[0].DBInstanceStatus' --output text | tr -d '\r')
+    case "$status" in
+      available)
+        log "$instance is available"
+        return 0
+        ;;
+      stopped)
+        log "$instance is stopped; starting it (this takes 5 to 10 minutes)"
+        aws rds start-db-instance --db-instance-identifier "$instance" >/dev/null
+        ;;
+      *) log "$instance is $status; waiting" ;;
+    esac
+    if ((SECONDS >= deadline)); then
+      log "$instance is still not available after $timeout_minutes minutes"
+      return 1
+    fi
+    sleep "${DB_POLL_SECONDS:-20}"
+  done
+}
+
 # container_overrides CONTAINER ARG...: ECS RunTask overrides that run ARG... in CONTAINER.
 # The arguments reach jq on stdin, one per line, so ones like -m are never read as jq options.
 container_overrides() {

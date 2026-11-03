@@ -214,6 +214,12 @@ Resources:
               - Effect: Allow
                 Action: ecr:DescribeImages
                 Resource: !Sub arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/cic-nids
+              # Start, never stop, this tier's database: a deployment after a manual stop
+              - Effect: Allow
+                Action:
+                  - rds:DescribeDBInstances
+                  - rds:StartDBInstance
+                Resource: !Sub arn:${AWS::Partition}:rds:${AWS::Region}:${AWS::AccountId}:db:cicnids-nonprod
 
   DeployRoleTest:
     Type: AWS::IAM::Role
@@ -278,6 +284,12 @@ Resources:
               - Effect: Allow
                 Action: ecr:DescribeImages
                 Resource: !Sub arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/cic-nids
+              # Start, never stop, this tier's database: a deployment after a manual stop
+              - Effect: Allow
+                Action:
+                  - rds:DescribeDBInstances
+                  - rds:StartDBInstance
+                Resource: !Sub arn:${AWS::Partition}:rds:${AWS::Region}:${AWS::AccountId}:db:cicnids-nonprod
 
   DeployRoleStaging:
     Type: AWS::IAM::Role
@@ -342,6 +354,12 @@ Resources:
               - Effect: Allow
                 Action: ecr:DescribeImages
                 Resource: !Sub arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/cic-nids
+              # Start, never stop, this tier's database: a deployment after a manual stop
+              - Effect: Allow
+                Action:
+                  - rds:DescribeDBInstances
+                  - rds:StartDBInstance
+                Resource: !Sub arn:${AWS::Partition}:rds:${AWS::Region}:${AWS::AccountId}:db:cicnids-nonprod
 
   DeployRoleProduction:
     Type: AWS::IAM::Role
@@ -406,6 +424,12 @@ Resources:
               - Effect: Allow
                 Action: ecr:DescribeImages
                 Resource: !Sub arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/cic-nids
+              # Start, never stop, this tier's database: a deployment after a manual stop
+              - Effect: Allow
+                Action:
+                  - rds:DescribeDBInstances
+                  - rds:StartDBInstance
+                Resource: !Sub arn:${AWS::Partition}:rds:${AWS::Region}:${AWS::AccountId}:db:cicnids-prod
 
 Outputs:
   CfnExecRoleArn:

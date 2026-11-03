@@ -27,5 +27,8 @@ case "$target" in
     ;;
 esac
 
+# A database stopped by hand comes back first, so the job can record its run
+ensure_database "$env_name"
+
 export TASK_TIMEOUT_MINUTES=${TASK_TIMEOUT_MINUTES:-120}
 exec bash scripts/ci/run_task.sh "$env_name" job "${command[@]}"
