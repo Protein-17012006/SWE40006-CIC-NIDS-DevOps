@@ -1,12 +1,14 @@
 """The parts of the stacks the ingestion job depends on; cfn-lint checks the rest."""
 
 import json
+import re
 from pathlib import Path
 
 import pytest
 from cfnlint.decode.cfn_yaml import load
 
 INFRA = Path(__file__).resolve().parents[2] / "infra"
+REPO = INFRA.parent
 
 
 def resources(template: str = "environment.yaml") -> dict:
@@ -112,3 +114,67 @@ def test_deploy_role_may_start_only_its_own_database(role):
 def test_no_role_may_stop_a_database():
     text = (INFRA / "bootstrap.yaml").read_text(encoding="utf-8")
     assert "rds:Stop" not in text and "rds:*" not in text
+
+
+ALARMS = {
+    "ServerErrorsAlarm": "5xx",
+    "CpuAlarm": "cpu",
+    "MemoryAlarm": "memory",
+    "UnhealthyTargetsAlarm": "unhealthy-targets",
+    "FailedIngestionAlarm": "failed-ingestion",
+}
+TOPIC = {"Fn::ImportValue": {"Fn::Sub": "${PlatformStack}-AlertTopicArn"}}
+
+
+@pytest.mark.parametrize("name", sorted(ALARMS))
+def test_alarm_emails_and_ignores_stopped_environments(name):
+    p = resources()[name]["Properties"]
+    assert p["AlarmName"] == {"Fn::Sub": f"cicnids-${{EnvName}}-{ALARMS[name]}"}
+    assert p["AlarmActions"] == [TOPIC] and p["OKActions"] == [TOPIC]
+    assert p["TreatMissingData"] == "notBreaching"
+
+
+def test_cpu_and_memory_thresholds_are_the_briefs():
+    r = resources()
+    assert r["CpuAlarm"]["Properties"]["Threshold"] == 80
+    assert r["MemoryAlarm"]["Properties"]["Threshold"] == 85
+
+
+def test_metric_filters_read_events_the_code_logs():
+    from pipeline.cli import COMMANDS
+
+    filters = [
+        r["Properties"] for r in resources().values() if r["Type"] == "AWS::Logs::MetricFilter"
+    ]
+    names = {f["MetricTransformations"][0]["MetricName"] for f in filters}
+    assert names == {"PageRenderTime", "IngestionDuration", "RejectedRows", "FailedIngestions"}
+    events = {
+        e for f in filters for e in re.findall(r'\$\.event = "([a-z_-]+)"', f["FilterPattern"])
+    }
+    assert events <= {"page_render", "ingestion_run", *COMMANDS}
+    assert '"page_render"' in (REPO / "app/telemetry.py").read_text(encoding="utf-8")
+    assert '"ingestion_run"' in (REPO / "pipeline/ingest.py").read_text(encoding="utf-8")
+
+
+def test_dashboard_shows_what_the_brief_lists():
+    body = resources()["Dashboard"]["Properties"]["DashboardBody"]["Fn::Sub"]
+    text = body[0] if isinstance(body, list) else body
+    widgets = json.loads(re.sub(r"\$\{[^}]+\}", "x", text))["widgets"]
+    assert [w["properties"]["title"] for w in widgets] == [
+        "Requests",
+        "Latency",
+        "Errors",
+        "CPU and memory",
+        "Network in and out",
+        "Targets",
+        "Page render time",
+        "Ingestion",
+        "Failed ingestions",
+        "Alarms",
+    ]
+
+
+def test_alert_email_stays_hidden():
+    assert load(str(INFRA / "platform.yaml"))["Parameters"]["AlertEmail"]["NoEcho"] is True
+    workflow = (REPO / ".github/workflows/infra.yml").read_text(encoding="utf-8")
+    assert "secrets.ALERT_EMAIL" in workflow and "vars.ALERT_EMAIL" not in workflow

@@ -9,9 +9,11 @@ Parameters:
     AllowedValues: [enabled, disabled]
     Default: enabled
     Description: Container Insights on the production cluster, the largest CloudWatch cost
+  # NoEcho: the address never shows in the console, describe-stacks or change sets
   AlertEmail:
     Type: String
     Default: ""
+    NoEcho: true
     Description: Optional address subscribed to the alerts topic; AWS sends it a confirmation email
 
 Conditions:
