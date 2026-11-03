@@ -26,7 +26,7 @@ These steps were done once on 31 October 2026; repeat them only for a new accoun
    ```
 
    The roles trust GitHub's immutable OIDC subjects, which carry the owner and repository ids. For another repository, pass its prefix as `GitHubSubjectPrefix`: `gh api repos/OWNER/REPO/actions/oidc/customization/sub --jq .sub_claim_prefix`. Each deploy role may start, but never stop, its tier's RDS instance, so a deployment can bring a stopped database back. When `infra/bootstrap.yaml` changes, deploy it again with the same command; the Infrastructure workflow only reminds you.
-2. In GitHub, set the secret `AWS_ACCOUNT_ID` (a secret, so public logs mask it) and the variable `AWS_REGION=us-east-1`. The variable `ALERT_EMAIL` is optional; when set, the platform stack subscribes it to the alerts topic.
+2. In GitHub, set the secret `AWS_ACCOUNT_ID` (a secret, so public logs mask it) and the variable `AWS_REGION=us-east-1`. The secret `ALERT_EMAIL` is optional; when set, the platform stack subscribes that address to the alerts topic. It is a secret, not a variable, so public workflow logs never show it, and the stack parameter is `NoEcho`.
 3. Create the environments development, test and staging without rules, and production and platform with a required reviewer.
 4. Run the Infrastructure workflow and approve `platform`. It creates `cicnids-platform`, then `cicnids-databases` (about 15 minutes).
 5. Run the CD workflow. The first run creates each environment stack, its database role and database, and runs the migrations.
@@ -91,6 +91,29 @@ The simulated file starts out quarantined, because no contract in `contracts/` m
 2. Move `tests/contracts/broken/simulated-real-traffic-01.csv` to `tests/contracts/simulated-real-traffic/`, and delete its entry in `tests/contracts/broken/expected.yaml`.
 3. Open a pull request. The contract tests check that the sample now matches its contract.
 4. After the merge, each deployment starts `reconcile`, which loads the quarantined file without a new upload. Label-based charts are hidden for it, because the file has no label.
+
+## Monitoring and alarms
+
+Each environment's stack carries its monitoring, so every deployment creates or updates it:
+
+- **Metrics.** Metric filters turn the JSON log lines into four metrics in the `CICNIDS` namespace, with an `Environment` dimension: `PageRenderTime` (ms, from `page_render`), `IngestionDuration` (s) and `RejectedRows` (from `ingestion_run`), and `FailedIngestions` (each `ingest` or `reconcile` command that ends with status `failed`).
+- **Dashboard.** `cicnids-<env>`: requests, latency, errors, CPU and memory, network (production only: Container Insights), healthy and unhealthy targets, the four metrics above and the alarms. Production's is the demo dashboard: https://us-east-1.console.aws.amazon.com/cloudwatch/home?region=us-east-1#dashboards/dashboard/cicnids-production
+- **Alarms.** Five per environment, each emailing the alerts topic when it fires and when it recovers:
+
+  | Alarm | Fires when |
+  | --- | --- |
+  | `cicnids-<env>-5xx` | the app answers with 5xx errors in each of three minutes running |
+  | `cicnids-<env>-cpu` | the service uses more than 80% CPU for five minutes running |
+  | `cicnids-<env>-memory` | the service uses more than 85% of its memory for five minutes running |
+  | `cicnids-<env>-unhealthy-targets` | a task fails its health check for three minutes running |
+  | `cicnids-<env>-failed-ingestion` | an ingest or reconcile run fails |
+
+  Missing data never breaches, so an environment stopped on purpose raises none. The 5xx alarm counts the app's own answers only: while a service is stopped, the load balancer answers the bots that probe its port with 503s itself.
+- **Email.** Alarms and the budget alerts reach the address in the `ALERT_EMAIL` secret, once its owner has confirmed the subscription in the email AWS sends.
+
+### Test the alarms
+
+Run the **Ingest** workflow with the environment and the target `raw/alarm-test.csv`. The file does not exist, so the run fails on purpose and records no ingestion run. `cicnids-<env>-failed-ingestion` fires within a couple of minutes and emails, and the recovery email follows a minute later. In production the run waits for approval like every production Ingest run.
 
 ## Stop and start environments by hand
 

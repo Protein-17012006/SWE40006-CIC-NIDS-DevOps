@@ -44,7 +44,7 @@ jobs:
           aws-region: ${{ vars.AWS_REGION }}
       - name: Preview cicnids-platform
         env:
-          ALERT_EMAIL: ${{ vars.ALERT_EMAIL }}
+          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
         run: bash scripts/ci/preview_changes.sh cicnids-platform infra/platform.yaml "AlertEmail=$ALERT_EMAIL"
       - name: Preview cicnids-databases
         run: bash scripts/ci/preview_changes.sh cicnids-databases infra/databases.yaml
@@ -71,5 +71,5 @@ jobs:
           aws-region: ${{ vars.AWS_REGION }}
       - name: Deploy cicnids-platform and cicnids-databases
         env:
-          ALERT_EMAIL: ${{ vars.ALERT_EMAIL }}
+          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
         run: bash scripts/ci/deploy_shared.sh

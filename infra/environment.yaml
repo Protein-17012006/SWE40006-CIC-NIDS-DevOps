@@ -452,6 +452,251 @@ Resources:
             MaximumRetryAttempts: 5
             MaximumEventAgeInSeconds: 3600
 
+  # Four metrics from the JSON log lines (NFR-05): namespace CICNIDS, dimension Environment
+  # taken from each line's env field.
+  PageRenderTimeFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref LogGroup
+      FilterPattern: '{ $.event = "page_render" }'
+      MetricTransformations:
+        - MetricNamespace: CICNIDS
+          MetricName: PageRenderTime
+          MetricValue: $.duration_ms
+          Unit: Milliseconds
+          Dimensions:
+            - Key: Environment
+              Value: $.env
+
+  IngestionDurationFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref LogGroup
+      FilterPattern: '{ $.event = "ingestion_run" }'
+      MetricTransformations:
+        - MetricNamespace: CICNIDS
+          MetricName: IngestionDuration
+          MetricValue: $.duration_s
+          Unit: Seconds
+          Dimensions:
+            - Key: Environment
+              Value: $.env
+
+  RejectedRowsFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref LogGroup
+      FilterPattern: '{ $.event = "ingestion_run" }'
+      MetricTransformations:
+        - MetricNamespace: CICNIDS
+          MetricName: RejectedRows
+          MetricValue: $.rows_rejected
+          Unit: Count
+          Dimensions:
+            - Key: Environment
+              Value: $.env
+
+  # The closing line of every ingest or reconcile command, so a failure counts once whether or
+  # not it got as far as recording a run
+  FailedIngestionsFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref LogGroup
+      FilterPattern: '{ ($.event = "ingest" || $.event = "reconcile") && $.status = "failed" }'
+      MetricTransformations:
+        - MetricNamespace: CICNIDS
+          MetricName: FailedIngestions
+          MetricValue: "1"
+          Unit: Count
+          Dimensions:
+            - Key: Environment
+              Value: $.env
+
+  # Alarms email the team through the alerts topic, on ALARM and on recovery (OPS-06). Missing
+  # data never breaches, so an environment stopped on purpose stays quiet.
+  ServerErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub cicnids-${EnvName}-5xx
+      AlarmDescription: !Sub The ${EnvName} app answered with 5xx errors in each of three minutes running.
+      Namespace: AWS/ApplicationELB
+      MetricName: HTTPCode_Target_5XX_Count
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !Select
+            - 1
+            - !Split
+              - loadbalancer/
+              - Fn::ImportValue: !Sub ${PlatformStack}-AlbArn
+        - Name: TargetGroup
+          Value: !GetAtt TargetGroup.TargetGroupFullName
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 3
+      DatapointsToAlarm: 3
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - Fn::ImportValue: !Sub ${PlatformStack}-AlertTopicArn
+      OKActions:
+        - Fn::ImportValue: !Sub ${PlatformStack}-AlertTopicArn
+
+  CpuAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub cicnids-${EnvName}-cpu
+      AlarmDescription: !Sub The ${EnvName} service used more than 80% CPU for five minutes running.
+      Namespace: AWS/ECS
+      MetricName: CPUUtilization
+      Dimensions:
+        - Name: ClusterName
+          Value: !Ref ClusterName
+        - Name: ServiceName
+          Value: !GetAtt Service.Name
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 5
+      DatapointsToAlarm: 5
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - Fn::ImportValue: !Sub ${PlatformStack}-AlertTopicArn
+      OKActions:
+        - Fn::ImportValue: !Sub ${PlatformStack}-AlertTopicArn
+
+  MemoryAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub cicnids-${EnvName}-memory
+      AlarmDescription: !Sub The ${EnvName} service used more than 85% of its memory for five minutes running.
+      Namespace: AWS/ECS
+      MetricName: MemoryUtilization
+      Dimensions:
+        - Name: ClusterName
+          Value: !Ref ClusterName
+        - Name: ServiceName
+          Value: !GetAtt Service.Name
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 5
+      DatapointsToAlarm: 5
+      Threshold: 85
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - Fn::ImportValue: !Sub ${PlatformStack}-AlertTopicArn
+      OKActions:
+        - Fn::ImportValue: !Sub ${PlatformStack}-AlertTopicArn
+
+  UnhealthyTargetsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub cicnids-${EnvName}-unhealthy-targets
+      AlarmDescription: !Sub A ${EnvName} task failed its health check for three minutes running.
+      Namespace: AWS/ApplicationELB
+      MetricName: UnHealthyHostCount
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !Select
+            - 1
+            - !Split
+              - loadbalancer/
+              - Fn::ImportValue: !Sub ${PlatformStack}-AlbArn
+        - Name: TargetGroup
+          Value: !GetAtt TargetGroup.TargetGroupFullName
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 3
+      DatapointsToAlarm: 3
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - Fn::ImportValue: !Sub ${PlatformStack}-AlertTopicArn
+      OKActions:
+        - Fn::ImportValue: !Sub ${PlatformStack}-AlertTopicArn
+
+  # One-minute periods, so a failure's email arrives well within five minutes
+  FailedIngestionAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub cicnids-${EnvName}-failed-ingestion
+      AlarmDescription: !Sub An ingest or reconcile run failed in ${EnvName}; its log line says why.
+      Namespace: CICNIDS
+      MetricName: FailedIngestions
+      Dimensions:
+        - Name: Environment
+          Value: !Ref EnvName
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - Fn::ImportValue: !Sub ${PlatformStack}-AlertTopicArn
+      OKActions:
+        - Fn::ImportValue: !Sub ${PlatformStack}-AlertTopicArn
+
+  # Production's is the demo dashboard. Network comes from Container Insights, which only the
+  # production cluster has, so that widget stays empty elsewhere.
+  Dashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub cicnids-${EnvName}
+      DashboardBody: !Sub
+        - |
+          {
+            "widgets": [
+              {"type": "metric", "x": 0, "y": 0, "width": 8, "height": 6, "properties": {
+                "title": "Requests", "view": "timeSeries", "region": "${AWS::Region}", "period": 60, "stat": "Sum",
+                "metrics": [["AWS/ApplicationELB", "RequestCount", "TargetGroup", "${TargetGroup.TargetGroupFullName}", "LoadBalancer", "${LoadBalancerName}", {"label": "Requests"}]]}},
+              {"type": "metric", "x": 8, "y": 0, "width": 8, "height": 6, "properties": {
+                "title": "Latency", "view": "timeSeries", "region": "${AWS::Region}", "period": 60,
+                "metrics": [["AWS/ApplicationELB", "TargetResponseTime", "TargetGroup", "${TargetGroup.TargetGroupFullName}", "LoadBalancer", "${LoadBalancerName}", {"stat": "p50", "label": "p50 (s)"}],
+                            ["...", {"stat": "p95", "label": "p95 (s)"}]]}},
+              {"type": "metric", "x": 16, "y": 0, "width": 8, "height": 6, "properties": {
+                "title": "Errors", "view": "timeSeries", "region": "${AWS::Region}", "period": 60, "stat": "Sum",
+                "metrics": [["AWS/ApplicationELB", "HTTPCode_Target_5XX_Count", "TargetGroup", "${TargetGroup.TargetGroupFullName}", "LoadBalancer", "${LoadBalancerName}", {"label": "5xx"}],
+                            [".", "HTTPCode_Target_4XX_Count", ".", ".", ".", ".", {"label": "4xx"}]]}},
+              {"type": "metric", "x": 0, "y": 6, "width": 8, "height": 6, "properties": {
+                "title": "CPU and memory", "view": "timeSeries", "region": "${AWS::Region}", "period": 60, "stat": "Average",
+                "yAxis": {"left": {"min": 0, "max": 100}},
+                "metrics": [["AWS/ECS", "CPUUtilization", "ClusterName", "${ClusterName}", "ServiceName", "${Service.Name}", {"label": "CPU %"}],
+                            [".", "MemoryUtilization", ".", ".", ".", ".", {"label": "Memory %"}]]}},
+              {"type": "metric", "x": 8, "y": 6, "width": 8, "height": 6, "properties": {
+                "title": "Network in and out", "view": "timeSeries", "region": "${AWS::Region}", "period": 60, "stat": "Average",
+                "metrics": [["ECS/ContainerInsights", "NetworkRxBytes", "ClusterName", "${ClusterName}", "ServiceName", "${Service.Name}", {"label": "In (bytes/s)"}],
+                            [".", "NetworkTxBytes", ".", ".", ".", ".", {"label": "Out (bytes/s)"}]]}},
+              {"type": "metric", "x": 16, "y": 6, "width": 8, "height": 6, "properties": {
+                "title": "Targets", "view": "timeSeries", "region": "${AWS::Region}", "period": 60, "stat": "Maximum",
+                "metrics": [["AWS/ApplicationELB", "HealthyHostCount", "TargetGroup", "${TargetGroup.TargetGroupFullName}", "LoadBalancer", "${LoadBalancerName}", {"label": "Healthy"}],
+                            [".", "UnHealthyHostCount", ".", ".", ".", ".", {"label": "Unhealthy"}]]}},
+              {"type": "metric", "x": 0, "y": 12, "width": 8, "height": 6, "properties": {
+                "title": "Page render time", "view": "timeSeries", "region": "${AWS::Region}", "period": 60,
+                "metrics": [["CICNIDS", "PageRenderTime", "Environment", "${EnvName}", {"stat": "p95", "label": "p95 (ms)"}],
+                            ["...", {"stat": "Maximum", "label": "Max (ms)"}]]}},
+              {"type": "metric", "x": 8, "y": 12, "width": 8, "height": 6, "properties": {
+                "title": "Ingestion", "view": "timeSeries", "region": "${AWS::Region}", "period": 300,
+                "metrics": [["CICNIDS", "IngestionDuration", "Environment", "${EnvName}", {"stat": "Maximum", "label": "Longest run (s)"}],
+                            [".", "RejectedRows", ".", ".", {"stat": "Sum", "label": "Rejected rows", "yAxis": "right"}]]}},
+              {"type": "metric", "x": 16, "y": 12, "width": 8, "height": 6, "properties": {
+                "title": "Failed ingestions", "view": "timeSeries", "region": "${AWS::Region}", "period": 60, "stat": "Sum",
+                "metrics": [["CICNIDS", "FailedIngestions", "Environment", "${EnvName}", {"label": "Failed"}]]}},
+              {"type": "alarm", "x": 0, "y": 18, "width": 24, "height": 3, "properties": {
+                "title": "Alarms",
+                "alarms": ["${ServerErrorsAlarm.Arn}", "${CpuAlarm.Arn}", "${MemoryAlarm.Arn}", "${UnhealthyTargetsAlarm.Arn}", "${FailedIngestionAlarm.Arn}"]}}
+            ]
+          }
+        - LoadBalancerName: !Select
+            - 1
+            - !Split
+              - loadbalancer/
+              - Fn::ImportValue: !Sub ${PlatformStack}-AlbArn
+
 Outputs:
   ServiceName:
     Value: !GetAtt Service.Name
@@ -471,3 +716,5 @@ Outputs:
     Value: !Sub cicnids-${EnvName}-admin
   IngestRuleName:
     Value: !Ref IngestRule
+  DashboardName:
+    Value: !Ref Dashboard
