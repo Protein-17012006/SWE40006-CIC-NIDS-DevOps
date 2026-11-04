@@ -20,7 +20,7 @@ PRIMARY = "#6750A4"
 CHART_HEIGHT = 300
 SHARE_BAR_HEIGHT = 120  # one bar; at 300 px it would be a block
 # Apart in lightness as well as hue, so the three main protocols read without colour vision
-PROTOCOL_COLORS = {"TCP": "#6750A4", "UDP": "#7FC8C8", "ICMP": "#F2C4CE", "Other": "#CAC4D0"}
+PROTOCOL_COLORS = {"TCP": "#6750A4", "UDP": "#6DACAC", "ICMP": "#F2C4CE", "Other": "#CAC4D0"}
 ALL_TRAFFIC = "All traffic"
 
 
